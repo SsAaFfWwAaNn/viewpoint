@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>OpinionHub</title>
+<title>Viewpoint</title>
 
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
@@ -728,8 +728,8 @@ grid-template-columns:1fr;
 
 }
 
-.main-col{order:1;}
-.sidebar{order:2;}
+.sidebar{order:1;}
+.main-col{order:2;}
 .right{order:3;}
 
 .debate{
@@ -837,7 +837,7 @@ input, textarea, select{font-size:16px;}
 <header>
 
 <div class="logo" id="logoHome">
-OpinionHub
+Viewpoint
 </div>
 
 <nav id="navTabs">
@@ -858,7 +858,7 @@ OpinionHub
 
 <footer>
 
-OpinionHub Prototype • Forest & Cream Theme
+Viewpoint Prototype • Forest & Cream Theme
 
 </footer>
 
@@ -1165,7 +1165,7 @@ async function renderDetail(id){
   return `
     <div class="wrapper" style="grid-template-columns:1fr;max-width:820px;">
       <div>
-        <button class="back-btn" id="backHome">← Back to OpinionHub</button>
+        <button class="back-btn" id="backHome">← Back to Viewpoint</button>
         ${body}
       </div>
     </div>
@@ -1221,13 +1221,19 @@ function renderInPlace(){
   }
 }
 
+let isSubmittingOpinion = false;
 async function submitOpinion(){
+  if(isSubmittingOpinion) return;
   const t = state.topics.find(x=>x.id===state.route.id);
   const textEl = document.getElementById('opText');
   const authorEl = document.getElementById('opAuthor');
   const sideEl = document.getElementById('opSide');
   const text = textEl.value.trim();
   if(!text) return;
+  isSubmittingOpinion = true;
+  const submitBtn = document.getElementById('submitOpinion');
+  if(submitBtn){ submitBtn.disabled = true; submitBtn.style.opacity = '0.6'; }
+
   const op = {
     id: uid(),
     text,
@@ -1243,6 +1249,7 @@ async function submitOpinion(){
   stats.opinionCount += 1;
   await saveTopics();
 
+  isSubmittingOpinion = false;
   render();
 }
 
@@ -1279,14 +1286,14 @@ function openNewModal(defaultType){
       <label>Category / Tag</label>
       <input type="text" id="newTag" placeholder="e.g. Politics, Technology">
       <label>Title</label>
-      <input type="text" id="newTitle" placeholder="e.g. What should be done about the Rohingya crisis?">
+      <input type="text" id="newTitle" placeholder="Enter a clear, specific title">
       <label>Description (optional)</label>
-      <textarea id="newDesc" placeholder="A sentence or two of context…"></textarea>
+      <textarea id="newDesc" placeholder="Add context for this discussion (optional)"></textarea>
       <div id="sideLabelsBlock" style="display:none;">
         <label>Side labels</label>
         <div class="side-labels-row">
-          <input type="text" id="sideALabel" placeholder="Side A" value="For">
-          <input type="text" id="sideBLabel" placeholder="Side B" value="Against">
+          <input type="text" id="sideALabel" placeholder="Side A" value="Side A">
+          <input type="text" id="sideBLabel" placeholder="Side B" value="Side B">
         </div>
       </div>
       <label>Your name (optional)</label>
@@ -1314,9 +1321,15 @@ function openNewModal(defaultType){
   document.getElementById('cancelNew').onclick = () => wrap.remove();
   wrap.onclick = (e) => { if(e.target===wrap) wrap.remove(); };
 
-  document.getElementById('confirmNew').onclick = async () => {
+  const confirmBtn = document.getElementById('confirmNew');
+  confirmBtn.onclick = async () => {
+    if(confirmBtn.disabled) return;
     const title = document.getElementById('newTitle').value.trim();
     if(!title) return;
+    confirmBtn.disabled = true;
+    confirmBtn.style.opacity = '0.6';
+    confirmBtn.textContent = 'Opening…';
+
     const desc = document.getElementById('newDesc').value.trim();
     const tag = document.getElementById('newTag').value.trim();
     const author = document.getElementById('newAuthor').value.trim();
@@ -1332,9 +1345,12 @@ function openNewModal(defaultType){
       const b = document.getElementById('sideBLabel').value.trim() || 'Side B';
       topic.sideLabels = [a,b];
     }
-    state.topics.push(topic);
-    await saveTopics();
-    wrap.remove();
+    try{
+      state.topics.push(topic);
+      await saveTopics();
+    } finally {
+      wrap.remove();
+    }
     state.route = { view:'detail', id: topic.id };
     render();
   };
