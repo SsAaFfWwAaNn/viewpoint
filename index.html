@@ -287,6 +287,67 @@ background:#FDEEE4;
 color:#B8623F;
 }
 
+.card-top-row{
+display:flex;
+align-items:center;
+justify-content:space-between;
+gap:10px;
+margin-bottom:4px;
+}
+.card-top-row .tag{margin-bottom:0;}
+
+.menu-wrap{
+position:relative;
+}
+.menu-btn{
+background:none;
+border:1px solid #D8DDD7;
+color:#66736A;
+width:32px;
+height:32px;
+border-radius:999px;
+font-size:16px;
+line-height:1;
+display:flex;
+align-items:center;
+justify-content:center;
+}
+@media (hover:hover) and (pointer:fine){
+.menu-btn:hover{border-color:#2F855A;color:#2F855A;}
+}
+.menu-dropdown{
+display:none;
+position:absolute;
+top:calc(100% + 6px);
+right:0;
+background:white;
+border:1px solid #D8DDD7;
+border-radius:12px;
+box-shadow:0 12px 28px rgba(0,0,0,.12);
+min-width:150px;
+overflow:hidden;
+z-index:30;
+}
+.menu-dropdown.open{display:block;}
+.menu-item{
+display:block;
+width:100%;
+text-align:left;
+padding:11px 14px;
+background:none;
+border:none;
+font-size:13.5px;
+color:#3A4A3F;
+font-weight:600;
+}
+@media (hover:hover) and (pointer:fine){
+.menu-item:hover{background:#F5F4EE;}
+}
+.menu-item.danger{color:#B8503F;}
+@media (hover:hover) and (pointer:fine){
+.menu-item.danger:hover{background:#FDEEEE;}
+}
+
 .title{
 
 font-size:25px;
@@ -343,6 +404,24 @@ color:#2F855A;
 
 font-weight:700;
 
+}
+
+.vote-topic-btn{
+background:#EDF7F0;
+border:1px solid transparent;
+padding:9px 16px;
+border-radius:999px;
+color:#2F855A;
+font-weight:700;
+font-size:14px;
+display:inline-flex;
+align-items:center;
+gap:6px;
+white-space:nowrap;
+}
+.vote-topic-btn.voted{background:#2F855A;color:white;}
+@media (hover:hover) and (pointer:fine){
+.vote-topic-btn:hover{border-color:#2F855A;}
 }
 
 .right{
@@ -863,7 +942,7 @@ Viewpoint Prototype • Forest & Cream Theme
 </footer>
 
 <script>
-const KEYS = { topics:'opinionhub-topics', ops:(id)=>`opinionhub-ops-${id}` };
+const KEYS = { topics:'opinionhub-topics', ops:(id)=>`opinionhub-ops-${id}`, myTopics:'opinionhub-my-topics', myOpinions:'opinionhub-my-opinions' };
 
 let state = {
   topics: [],
@@ -872,7 +951,11 @@ let state = {
   search: '',
   route: { view:'home', id:null },
   votedThisSession: new Set(),
+  votedTopicsSession: new Set(),
   detailOpinions: [],
+  myTopicIds: new Set(),
+  myOpinionIds: new Set(),
+  openMenuFor: null,
 };
 
 function uid(){ return Math.random().toString(36).slice(2,10) + Date.now().toString(36).slice(-4); }
@@ -897,27 +980,58 @@ function escapeHtml(str){
   return d.innerHTML;
 }
 
-async function loadTopics(){
+function renderMenu(menuId, deleteAttr, deleteId, label){
+  const open = state.openMenuFor === menuId;
+  return `
+    <div class="menu-wrap">
+      <button class="menu-btn" data-menu-toggle="${menuId}" aria-label="More options">⋯</button>
+      <div class="menu-dropdown ${open ? 'open':''}">
+        <button class="menu-item danger" data-${deleteAttr}="${deleteId}">🗑 ${label}</button>
+      </div>
+    </div>
+  `;
+}
+
+function storageGet(key){
   try{
-    const res = await window.storage.get(KEYS.topics, true);
-    state.topics = res ? JSON.parse(res.value) : [];
-  }catch(e){ state.topics = []; }
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  }catch(e){ console.error('Could not read', key, e); return null; }
+}
+function storageSet(key, value){
+  try{
+    localStorage.setItem(key, JSON.stringify(value));
+  }catch(e){ console.error('Could not save', key, e); }
+}
+function storageRemove(key){
+  try{ localStorage.removeItem(key); }catch(e){}
+}
+
+async function loadTopics(){
+  state.topics = storageGet(KEYS.topics) || [];
 }
 async function saveTopics(){
-  await window.storage.set(KEYS.topics, JSON.stringify(state.topics), true);
+  storageSet(KEYS.topics, state.topics);
 }
 async function loadOpinions(topicId){
-  try{
-    const res = await window.storage.get(KEYS.ops(topicId), true);
-    state.detailOpinions = res ? JSON.parse(res.value) : [];
-  }catch(e){ state.detailOpinions = []; }
+  state.detailOpinions = storageGet(KEYS.ops(topicId)) || [];
 }
 async function saveOpinions(topicId){
-  await window.storage.set(KEYS.ops(topicId), JSON.stringify(state.detailOpinions), true);
+  storageSet(KEYS.ops(topicId), state.detailOpinions);
+}
+
+function loadMyIds(){
+  state.myTopicIds = new Set(storageGet(KEYS.myTopics) || []);
+  state.myOpinionIds = new Set(storageGet(KEYS.myOpinions) || []);
+}
+function persistMyIds(){
+  storageSet(KEYS.myTopics, [...state.myTopicIds]);
+  storageSet(KEYS.myOpinions, [...state.myOpinionIds]);
 }
 
 function ensureStats(t){
-  t.stats = t.stats || { opinionCount:0, voteCount:0, sideAVotes:0, sideBVotes:0 };
+  t.stats = t.stats || { opinionCount:0, voteCount:0, sideAVotes:0, sideBVotes:0, topicVotes:0 };
+  if(t.stats.topicVotes === undefined) t.stats.topicVotes = 0;
   return t.stats;
 }
 
@@ -959,14 +1073,19 @@ function renderSidebarRight(){
 
 function renderCard(t){
   const stats = ensureStats(t);
+  const votedTopic = state.votedTopicsSession.has(t.id);
   if(t.type === 'debate'){
     const total = stats.sideAVotes + stats.sideBVotes;
     const pctA = total ? Math.round((stats.sideAVotes/total)*100) : 50;
     const pctB = 100 - pctA;
     const labels = t.sideLabels || ['Side A','Side B'];
+    const mine = state.myTopicIds.has(t.id);
     return `
       <div class="card" data-open="${t.id}">
-        <div class="tag debate-tag">⚔ ${escapeHtml(t.tag || 'Debate')}</div>
+        <div class="card-top-row">
+          <div class="tag debate-tag">⚔ ${escapeHtml(t.tag || 'Debate')}</div>
+          ${mine ? renderMenu('card-'+t.id, 'delete-topic', t.id, 'Delete debate') : ''}
+        </div>
         <div class="title">${escapeHtml(t.title)}</div>
         ${t.description ? `<div class="desc">${escapeHtml(t.description)}</div>` : ''}
         <div class="debate">
@@ -986,14 +1105,21 @@ function renderCard(t){
             <span>💬 ${stats.opinionCount} Arguments</span>
             <span>🕒 ${timeAgo(t.createdAt)}</span>
           </div>
-          <div class="vote">▲ ${formatK(stats.voteCount)} Votes</div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button class="vote-topic-btn ${votedTopic?'voted':''}" data-vote-topic="${t.id}" aria-label="${votedTopic?'Remove your vote for this debate':'Vote for this debate'}">▲ ${formatK(stats.topicVotes)}</button>
+            <div class="vote">🗳 ${formatK(stats.voteCount)} from arguments</div>
+          </div>
         </div>
       </div>
     `;
   }
+  const mine = state.myTopicIds.has(t.id);
   return `
     <div class="card" data-open="${t.id}">
-      <div class="tag">${escapeHtml(t.tag || 'General')}</div>
+      <div class="card-top-row">
+        <div class="tag">${escapeHtml(t.tag || 'General')}</div>
+        ${mine ? renderMenu('card-'+t.id, 'delete-topic', t.id, 'Delete topic') : ''}
+      </div>
       <div class="title">${escapeHtml(t.title)}</div>
       ${t.description ? `<div class="desc">${escapeHtml(t.description)}</div>` : ''}
       <div class="bottom">
@@ -1001,7 +1127,10 @@ function renderCard(t){
           <span>💬 ${stats.opinionCount} Opinions</span>
           <span>🕒 ${timeAgo(t.createdAt)}</span>
         </div>
-        <div class="vote">▲ ${formatK(stats.voteCount)} Votes</div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button class="vote-topic-btn ${votedTopic?'voted':''}" data-vote-topic="${t.id}" aria-label="${votedTopic?'Remove your vote for this topic':'Vote for this topic'}">▲ ${formatK(stats.topicVotes)}</button>
+          <div class="vote">🗳 ${formatK(stats.voteCount)} from opinions</div>
+        </div>
       </div>
     </div>
   `;
@@ -1063,17 +1192,25 @@ async function renderDetail(id){
   const stats = ensureStats(t);
   const isDebate = t.type === 'debate';
   const labels = t.sideLabels || ['Side A','Side B'];
+  const mineTopic = state.myTopicIds.has(t.id);
+  const deleteTopicMenu = mineTopic ? `<div style="position:absolute;top:20px;right:20px;">${renderMenu('detail-'+t.id, 'delete-topic', t.id, 'Delete '+(isDebate?'debate':'topic'))}</div>` : '';
+  const votedTopic = state.votedTopicsSession.has(t.id);
+  const topicVoteBtn = `<button class="vote-topic-btn ${votedTopic?'voted':''}" data-vote-topic="${t.id}" style="margin-top:16px;" aria-label="${votedTopic?'Remove your vote':'Vote for this '+(isDebate?'debate':'topic')}">▲ ${votedTopic?'Voted':'Vote for this '+(isDebate?'debate':'topic')} · ${formatK(ensureStats(t).topicVotes)}</button>`;
 
   const opinionRow = (op, isTop) => {
     const voted = state.votedThisSession.has(op.id);
+    const mineOp = state.myOpinionIds.has(op.id);
     return `
       <div class="opinion-item ${isTop ? 'top':''}">
         <div class="vote-col">
-          <button class="vote-arrow ${voted?'voted':''}" data-vote="${op.id}" aria-label="Upvote">▲</button>
+          <button class="vote-arrow ${voted?'voted':''}" data-vote="${op.id}" aria-label="${voted ? 'Remove your vote' : 'Upvote'}" title="${voted ? 'Click to remove your vote' : 'Upvote'}">▲</button>
           <div class="vote-count">${op.votes}</div>
         </div>
-        <div>
-          ${isTop ? `<div class="top-badge">TOP</div>` : ''}
+        <div style="flex:1;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+            <div>${isTop ? `<div class="top-badge">TOP</div>` : ''}</div>
+            ${mineOp ? renderMenu('opinion-'+op.id, 'delete-opinion', op.id, 'Delete') : ''}
+          </div>
           <div class="opinion-text">${escapeHtml(op.text)}</div>
           <div class="opinion-author">${escapeHtml(op.author || 'Anonymous')} · ${timeAgo(op.createdAt)}</div>
         </div>
@@ -1090,7 +1227,8 @@ async function renderDetail(id){
     const pctA = total ? Math.round((stats.sideAVotes/total)*100) : 50;
     const pctB = 100 - pctA;
     body = `
-      <div class="detail-card">
+      <div class="detail-card" style="position:relative;">
+        ${deleteTopicMenu}
         <div class="tag debate-tag">⚔ ${escapeHtml(t.tag||'Debate')}</div>
         <div class="title">${escapeHtml(t.title)}</div>
         ${t.description ? `<div class="desc" style="margin-bottom:0;">${escapeHtml(t.description)}</div>` : ''}
@@ -1136,7 +1274,8 @@ async function renderDetail(id){
   } else {
     const opinions = [...state.detailOpinions].sort((a,b)=>b.votes-a.votes);
     body = `
-      <div class="detail-card">
+      <div class="detail-card" style="position:relative;">
+        ${deleteTopicMenu}
         <div class="tag">${escapeHtml(t.tag||'General')}</div>
         <div class="title">${escapeHtml(t.title)}</div>
         ${t.description ? `<div class="desc" style="margin-bottom:0;">${escapeHtml(t.description)}</div>` : ''}
@@ -1207,6 +1346,23 @@ function bindEvents(){
   document.querySelectorAll('[data-vote]').forEach(el=>{
     el.onclick = () => castVote(el.dataset.vote);
   });
+
+  document.querySelectorAll('[data-menu-toggle]').forEach(el=>{
+    el.onclick = (e) => {
+      e.stopPropagation();
+      const id = el.dataset.menuToggle;
+      state.openMenuFor = (state.openMenuFor === id) ? null : id;
+      render();
+    };
+  });
+
+  document.querySelectorAll('[data-delete-topic]').forEach(el=>{
+    el.onclick = (e) => { e.stopPropagation(); deleteTopic(el.dataset.deleteTopic); };
+  });
+
+  document.querySelectorAll('[data-delete-opinion]').forEach(el=>{
+    el.onclick = (e) => { e.stopPropagation(); deleteOpinion(el.dataset.deleteOpinion); };
+  });
 }
 
 // re-render just the feed area on search keystrokes without stealing input focus
@@ -1245,6 +1401,9 @@ async function submitOpinion(){
   state.detailOpinions.push(op);
   await saveOpinions(t.id);
 
+  state.myOpinionIds.add(op.id);
+  persistMyIds();
+
   const stats = ensureStats(t);
   stats.opinionCount += 1;
   await saveTopics();
@@ -1253,20 +1412,104 @@ async function submitOpinion(){
   render();
 }
 
+function showConfirm(message, confirmLabel, onConfirm){
+  const wrap = document.createElement('div');
+  wrap.className = 'overlay';
+  wrap.innerHTML = `
+    <div class="modal" style="max-width:380px;">
+      <h2 style="font-size:18px;">Are you sure?</h2>
+      <p style="color:#66736A;font-size:14px;line-height:1.6;">${escapeHtml(message)}</p>
+      <div class="modal-foot">
+        <button class="cancel-btn" id="confirmCancelBtn">Cancel</button>
+        <button class="post-btn" id="confirmOkBtn" style="background:#B8503F;">${escapeHtml(confirmLabel)}</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(wrap);
+  document.getElementById('confirmCancelBtn').onclick = () => wrap.remove();
+  wrap.onclick = (e) => { if(e.target===wrap) wrap.remove(); };
+  document.getElementById('confirmOkBtn').onclick = () => {
+    wrap.remove();
+    onConfirm();
+  };
+}
+
+function deleteOpinion(opinionId){
+  const t = state.topics.find(x=>x.id===state.route.id);
+  if(!t) return;
+  const idx = state.detailOpinions.findIndex(o=>o.id===opinionId);
+  if(idx===-1) return;
+
+  showConfirm("Delete this opinion? This can't be undone.", 'Delete', async () => {
+    const i = state.detailOpinions.findIndex(o=>o.id===opinionId);
+    if(i===-1) return;
+    const op = state.detailOpinions[i];
+    state.detailOpinions.splice(i,1);
+    await saveOpinions(t.id);
+
+    const stats = ensureStats(t);
+    stats.opinionCount = Math.max(0, stats.opinionCount - 1);
+    stats.voteCount = Math.max(0, stats.voteCount - op.votes);
+    if(t.type==='debate'){
+      if(op.side==='a') stats.sideAVotes = Math.max(0, stats.sideAVotes - op.votes);
+      else stats.sideBVotes = Math.max(0, stats.sideBVotes - op.votes);
+    }
+    await saveTopics();
+
+    state.myOpinionIds.delete(opinionId);
+    persistMyIds();
+    state.votedThisSession.delete(opinionId);
+    state.openMenuFor = null;
+
+    render();
+  });
+}
+
+function deleteTopic(topicId){
+  const t = state.topics.find(x=>x.id===topicId);
+  const label = t && t.type==='debate' ? 'debate' : 'topic';
+
+  showConfirm(`Delete this ${label} and all its opinions? This can't be undone.`, 'Delete', async () => {
+    state.topics = state.topics.filter(x=>x.id!==topicId);
+    await saveTopics();
+    storageRemove(KEYS.ops(topicId));
+
+    state.myTopicIds.delete(topicId);
+    persistMyIds();
+    state.openMenuFor = null;
+
+    if(state.route.view==='detail' && state.route.id===topicId){
+      state.route = { view:'home', id:null };
+    }
+    render();
+  });
+}
+
 async function castVote(opinionId){
-  if(state.votedThisSession.has(opinionId)) return;
   const op = state.detailOpinions.find(o=>o.id===opinionId);
   if(!op) return;
-  op.votes += 1;
-  state.votedThisSession.add(opinionId);
-  await saveOpinions(state.route.id);
-
   const t = state.topics.find(x=>x.id===state.route.id);
   const stats = ensureStats(t);
-  stats.voteCount += 1;
-  if(t.type==='debate'){
-    if(op.side==='a') stats.sideAVotes += 1; else stats.sideBVotes += 1;
+  const alreadyVoted = state.votedThisSession.has(opinionId);
+
+  if(alreadyVoted){
+    op.votes = Math.max(0, op.votes - 1);
+    state.votedThisSession.delete(opinionId);
+    stats.voteCount = Math.max(0, stats.voteCount - 1);
+    if(t.type==='debate'){
+      if(op.side==='a') stats.sideAVotes = Math.max(0, stats.sideAVotes - 1);
+      else stats.sideBVotes = Math.max(0, stats.sideBVotes - 1);
+    }
+  } else {
+    op.votes += 1;
+    state.votedThisSession.add(opinionId);
+    stats.voteCount += 1;
+    if(t.type==='debate'){
+      if(op.side==='a') stats.sideAVotes += 1; else stats.sideBVotes += 1;
+    }
   }
+
+  await saveOpinions(t.id);
   await saveTopics();
 
   render();
@@ -1338,7 +1581,7 @@ function openNewModal(defaultType){
       title, description: desc, tag, author,
       type: pickedType,
       createdAt: Date.now(),
-      stats: { opinionCount:0, voteCount:0, sideAVotes:0, sideBVotes:0 },
+      stats: { opinionCount:0, voteCount:0, sideAVotes:0, sideBVotes:0, topicVotes:0 },
     };
     if(pickedType==='debate'){
       const a = document.getElementById('sideALabel').value.trim() || 'Side A';
@@ -1348,6 +1591,8 @@ function openNewModal(defaultType){
     try{
       state.topics.push(topic);
       await saveTopics();
+      state.myTopicIds.add(topic.id);
+      persistMyIds();
     } finally {
       wrap.remove();
     }
@@ -1356,7 +1601,15 @@ function openNewModal(defaultType){
   };
 }
 
+document.addEventListener('click', () => {
+  if(state.openMenuFor !== null){
+    state.openMenuFor = null;
+    render();
+  }
+});
+
 async function init(){
+  loadMyIds();
   await loadTopics();
   state.loading = false;
   render();
