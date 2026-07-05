@@ -1247,6 +1247,7 @@ async function renderDetail(id){
           <span>▲ ${formatK(stats.voteCount)} votes total</span>
           <span>🕒 opened ${timeAgo(t.createdAt)}</span>
         </div>
+        ${topicVoteBtn}
       </div>
 
       <div class="opinion-form">
@@ -1284,6 +1285,7 @@ async function renderDetail(id){
           <span>▲ ${formatK(stats.voteCount)} votes total</span>
           <span>🕒 opened ${timeAgo(t.createdAt)}</span>
         </div>
+        ${topicVoteBtn}
       </div>
 
       <div class="opinion-form">
@@ -1345,6 +1347,10 @@ function bindEvents(){
 
   document.querySelectorAll('[data-vote]').forEach(el=>{
     el.onclick = () => castVote(el.dataset.vote);
+  });
+
+  document.querySelectorAll('[data-vote-topic]').forEach(el=>{
+    el.onclick = (e) => { e.stopPropagation(); toggleTopicVote(el.dataset.voteTopic); };
   });
 
   document.querySelectorAll('[data-menu-toggle]').forEach(el=>{
@@ -1512,6 +1518,24 @@ async function castVote(opinionId){
   await saveOpinions(t.id);
   await saveTopics();
 
+  render();
+}
+
+async function toggleTopicVote(topicId){
+  const t = state.topics.find(x=>x.id===topicId);
+  if(!t) return;
+  const stats = ensureStats(t);
+  const alreadyVoted = state.votedTopicsSession.has(topicId);
+
+  if(alreadyVoted){
+    stats.topicVotes = Math.max(0, stats.topicVotes - 1);
+    state.votedTopicsSession.delete(topicId);
+  } else {
+    stats.topicVotes += 1;
+    state.votedTopicsSession.add(topicId);
+  }
+
+  await saveTopics();
   render();
 }
 
