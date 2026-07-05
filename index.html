@@ -941,12 +941,30 @@ Viewpoint Prototype • Forest & Cream Theme
 
 </footer>
 
-<script>
-const KEYS = { topics:'opinionhub-topics', ops:(id)=>`opinionhub-ops-${id}`, myTopics:'opinionhub-my-topics', myOpinions:'opinionhub-my-opinions' };
+<script type="module">
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+/* =====================================================================
+   SUPABASE SETUP — paste your project's URL and anon key here.
+   Get these from: Supabase dashboard → Project Settings → API
+   ===================================================================== */
+const SUPABASE_URL = "https://yumovyuoavawnudfxkfz.supabase.co/rest/v1/";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl1bW92eXVvYXZhd251ZGZ4a2Z6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMyMzg1ODQsImV4cCI6MjA5ODgxNDU4NH0.MEBivnmRlxy8QGJiVZ8zISx5os1XTPRnXA8BGzju4wM";
+/* ===================================================================== */
+
+const CONFIG_IS_PLACEHOLDER = SUPABASE_URL === "YOUR_SUPABASE_URL";
+let supabase = null;
+if(!CONFIG_IS_PLACEHOLDER){
+  supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+}
+
+const KEYS = { myTopics:'opinionhub-my-topics', myOpinions:'opinionhub-my-opinions' };
 
 let state = {
   topics: [],
   loading: true,
+  setupNeeded: false,
+  loadError: false,
   filter: 'home',
   search: '',
   route: { view:'home', id:null },
@@ -957,8 +975,6 @@ let state = {
   myOpinionIds: new Set(),
   openMenuFor: null,
 };
-
-function uid(){ return Math.random().toString(36).slice(2,10) + Date.now().toString(36).slice(-4); }
 
 function formatK(n){
   if(n >= 1000) return (n/1000).toFixed(n % 1000 === 0 ? 0 : 1) + 'K';
@@ -992,32 +1008,16 @@ function renderMenu(menuId, deleteAttr, deleteId, label){
   `;
 }
 
+/* ---------- local-only helpers (ownership tracking, not backend data) ---------- */
+
 function storageGet(key){
   try{
     const raw = localStorage.getItem(key);
     return raw ? JSON.parse(raw) : null;
-  }catch(e){ console.error('Could not read', key, e); return null; }
+  }catch(e){ return null; }
 }
 function storageSet(key, value){
-  try{
-    localStorage.setItem(key, JSON.stringify(value));
-  }catch(e){ console.error('Could not save', key, e); }
-}
-function storageRemove(key){
-  try{ localStorage.removeItem(key); }catch(e){}
-}
-
-async function loadTopics(){
-  state.topics = storageGet(KEYS.topics) || [];
-}
-async function saveTopics(){
-  storageSet(KEYS.topics, state.topics);
-}
-async function loadOpinions(topicId){
-  state.detailOpinions = storageGet(KEYS.ops(topicId)) || [];
-}
-async function saveOpinions(topicId){
-  storageSet(KEYS.ops(topicId), state.detailOpinions);
+  try{ localStorage.setItem(key, JSON.stringify(value)); }catch(e){}
 }
 
 function loadMyIds(){
@@ -1029,18 +1029,102 @@ function persistMyIds(){
   storageSet(KEYS.myOpinions, [...state.myOpinionIds]);
 }
 
+/* ---------- Supabase data layer ---------- */
+
+function mapTopicRow(row){
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    tag: row.tag,
+    author: row.author,
+    type: row.type,
+    sideLabels: row.side_labels,
+    createdAt: new Date(row.created_at).getTime(),
+    stats: {
+      opinionCount: row.opinion_count,
+      voteCount: row.vote_count,
+      sideAVotes: row.side_a_votes,
+      sideBVotes: row.side_b_votes,
+      topicVotes: row.topic_votes,
+    }
+  };
+}
+
+function mapOpinionRow(row){
+  return {
+    id: row.id,
+    text: row.text,
+    author: row.author,
+    side: row.side,
+    votes: row.votes,
+    createdAt: new Date(row.created_at).getTime(),
+  };
+}
+
+async function loadTopics(){
+  try{
+    const { data, error } = await supabase.from('topics').select('*').order('created_at', { ascending:false });
+    if(error) throw error;
+    state.topics = data.map(mapTopicRow);
+    state.loadError = false;
+  }catch(e){
+    console.error('Failed to load topics:', e);
+    state.topics = [];
+    state.loadError = true;
+  }
+}
+
+async function loadOpinions(topicId){
+  try{
+    const { data, error } = await supabase.from('opinions').select('*').eq('topic_id', topicId).order('created_at', { ascending:false });
+    if(error) throw error;
+    state.detailOpinions = data.map(mapOpinionRow);
+  }catch(e){
+    console.error('Failed to load opinions:', e);
+    state.detailOpinions = [];
+  }
+}
+
 function ensureStats(t){
   t.stats = t.stats || { opinionCount:0, voteCount:0, sideAVotes:0, sideBVotes:0, topicVotes:0 };
   if(t.stats.topicVotes === undefined) t.stats.topicVotes = 0;
   return t.stats;
 }
 
+/* ---------- Render ---------- */
+
 async function render(){
   const root = document.getElementById('root');
-  if(state.loading){
-    root.innerHTML = `<div class="wrapper"><div class="empty-state" style="grid-column:1/-1;"><div class="big">🌿</div>Loading the floor…</div></div>`;
+
+  if(state.setupNeeded){
+    root.innerHTML = `
+      <div class="wrapper"><div class="empty-state" style="grid-column:1/-1;text-align:left;max-width:640px;margin:40px auto;">
+        <div class="big">🔧</div>
+        <strong>Supabase isn't connected yet.</strong><br><br>
+        Open this HTML file, find the <code>SUPABASE_URL</code> and <code>SUPABASE_ANON_KEY</code> constants
+        near the top of the &lt;script&gt; tag, and paste in your project's real values.
+        You'll find them in the Supabase dashboard under Project Settings → API.
+      </div></div>`;
     return;
   }
+
+  if(state.loading){
+    root.innerHTML = `<div class="wrapper"><div class="empty-state" style="grid-column:1/-1;"><div class="big">🌿</div>Loading…</div></div>`;
+    return;
+  }
+
+  if(state.loadError){
+    root.innerHTML = `
+      <div class="wrapper"><div class="empty-state" style="grid-column:1/-1;text-align:left;max-width:640px;margin:40px auto;">
+        <div class="big">⚠️</div>
+        <strong>Couldn't reach Supabase.</strong><br><br>
+        Double-check your <code>SUPABASE_URL</code>/<code>SUPABASE_ANON_KEY</code>, make sure you ran the schema
+        SQL in the Supabase SQL editor, and check the browser console for the exact error.
+      </div></div>`;
+    return;
+  }
+
   document.querySelectorAll('#navTabs button').forEach(b=>{
     b.classList.toggle('active', state.route.view==='home' && b.dataset.filter===state.filter);
   });
@@ -1195,7 +1279,7 @@ async function renderDetail(id){
   const mineTopic = state.myTopicIds.has(t.id);
   const deleteTopicMenu = mineTopic ? `<div style="position:absolute;top:20px;right:20px;">${renderMenu('detail-'+t.id, 'delete-topic', t.id, 'Delete '+(isDebate?'debate':'topic'))}</div>` : '';
   const votedTopic = state.votedTopicsSession.has(t.id);
-  const topicVoteBtn = `<button class="vote-topic-btn ${votedTopic?'voted':''}" data-vote-topic="${t.id}" style="margin-top:16px;" aria-label="${votedTopic?'Remove your vote':'Vote for this '+(isDebate?'debate':'topic')}">▲ ${votedTopic?'Voted':'Vote for this '+(isDebate?'debate':'topic')} · ${formatK(ensureStats(t).topicVotes)}</button>`;
+  const topicVoteBtn = `<button class="vote-topic-btn ${votedTopic?'voted':''}" data-vote-topic="${t.id}" style="margin-top:16px;" aria-label="${votedTopic?'Remove your vote':'Vote for this '+(isDebate?'debate':'topic')}">▲ ${votedTopic?'Voted':'Vote for this '+(isDebate?'debate':'topic')} · ${formatK(stats.topicVotes)}</button>`;
 
   const opinionRow = (op, isTop) => {
     const voted = state.votedThisSession.has(op.id);
@@ -1371,7 +1455,6 @@ function bindEvents(){
   });
 }
 
-// re-render just the feed area on search keystrokes without stealing input focus
 function renderInPlace(){
   const root = document.getElementById('root');
   root.innerHTML = renderHome();
@@ -1396,23 +1479,28 @@ async function submitOpinion(){
   const submitBtn = document.getElementById('submitOpinion');
   if(submitBtn){ submitBtn.disabled = true; submitBtn.style.opacity = '0.6'; }
 
-  const op = {
-    id: uid(),
+  const opRow = {
+    topic_id: t.id,
     text,
     author: authorEl.value.trim(),
-    votes: 0,
     side: t.type==='debate' ? (sideEl ? sideEl.value : 'a') : null,
-    createdAt: Date.now(),
   };
-  state.detailOpinions.push(op);
-  await saveOpinions(t.id);
 
-  state.myOpinionIds.add(op.id);
-  persistMyIds();
+  try{
+    const { data, error } = await supabase.from('opinions').insert(opRow).select().single();
+    if(error) throw error;
+    const op = mapOpinionRow(data);
+    state.detailOpinions.push(op);
+    state.myOpinionIds.add(op.id);
+    persistMyIds();
 
-  const stats = ensureStats(t);
-  stats.opinionCount += 1;
-  await saveTopics();
+    const stats = ensureStats(t);
+    stats.opinionCount += 1;
+    await supabase.rpc('increment_opinion_count', { p_topic_id: t.id });
+  }catch(e){
+    console.error('Failed to post opinion:', e);
+    alert("Couldn't post that — check your Supabase setup/connection and try again.");
+  }
 
   isSubmittingOpinion = false;
   render();
@@ -1451,7 +1539,6 @@ function deleteOpinion(opinionId){
     if(i===-1) return;
     const op = state.detailOpinions[i];
     state.detailOpinions.splice(i,1);
-    await saveOpinions(t.id);
 
     const stats = ensureStats(t);
     stats.opinionCount = Math.max(0, stats.opinionCount - 1);
@@ -1460,14 +1547,18 @@ function deleteOpinion(opinionId){
       if(op.side==='a') stats.sideAVotes = Math.max(0, stats.sideAVotes - op.votes);
       else stats.sideBVotes = Math.max(0, stats.sideBVotes - op.votes);
     }
-    await saveTopics();
 
     state.myOpinionIds.delete(opinionId);
     persistMyIds();
     state.votedThisSession.delete(opinionId);
     state.openMenuFor = null;
-
     render();
+
+    try{
+      await supabase.rpc('delete_opinion', { p_opinion_id: opinionId });
+    }catch(e){
+      console.error('Failed to delete opinion on server:', e);
+    }
   });
 }
 
@@ -1477,9 +1568,6 @@ function deleteTopic(topicId){
 
   showConfirm(`Delete this ${label} and all its opinions? This can't be undone.`, 'Delete', async () => {
     state.topics = state.topics.filter(x=>x.id!==topicId);
-    await saveTopics();
-    storageRemove(KEYS.ops(topicId));
-
     state.myTopicIds.delete(topicId);
     persistMyIds();
     state.openMenuFor = null;
@@ -1488,6 +1576,12 @@ function deleteTopic(topicId){
       state.route = { view:'home', id:null };
     }
     render();
+
+    try{
+      await supabase.rpc('delete_topic_and_opinions', { p_topic_id: topicId });
+    }catch(e){
+      console.error('Failed to delete on server:', e);
+    }
   });
 }
 
@@ -1497,6 +1591,7 @@ async function castVote(opinionId){
   const t = state.topics.find(x=>x.id===state.route.id);
   const stats = ensureStats(t);
   const alreadyVoted = state.votedThisSession.has(opinionId);
+  const delta = alreadyVoted ? -1 : 1;
 
   if(alreadyVoted){
     op.votes = Math.max(0, op.votes - 1);
@@ -1515,10 +1610,13 @@ async function castVote(opinionId){
     }
   }
 
-  await saveOpinions(t.id);
-  await saveTopics();
-
   render();
+
+  try{
+    await supabase.rpc('vote_opinion', { p_opinion_id: opinionId, p_delta: delta });
+  }catch(e){
+    console.error('Failed to save vote:', e);
+  }
 }
 
 async function toggleTopicVote(topicId){
@@ -1526,6 +1624,7 @@ async function toggleTopicVote(topicId){
   if(!t) return;
   const stats = ensureStats(t);
   const alreadyVoted = state.votedTopicsSession.has(topicId);
+  const delta = alreadyVoted ? -1 : 1;
 
   if(alreadyVoted){
     stats.topicVotes = Math.max(0, stats.topicVotes - 1);
@@ -1535,8 +1634,13 @@ async function toggleTopicVote(topicId){
     state.votedTopicsSession.add(topicId);
   }
 
-  await saveTopics();
   render();
+
+  try{
+    await supabase.rpc('vote_topic', { p_topic_id: topicId, p_delta: delta });
+  }catch(e){
+    console.error('Failed to save topic vote:', e);
+  }
 }
 
 function openNewModal(defaultType){
@@ -1600,27 +1704,31 @@ function openNewModal(defaultType){
     const desc = document.getElementById('newDesc').value.trim();
     const tag = document.getElementById('newTag').value.trim();
     const author = document.getElementById('newAuthor').value.trim();
-    const topic = {
-      id: uid(),
+    const topicRow = {
       title, description: desc, tag, author,
       type: pickedType,
-      createdAt: Date.now(),
-      stats: { opinionCount:0, voteCount:0, sideAVotes:0, sideBVotes:0, topicVotes:0 },
+      side_labels: null,
     };
     if(pickedType==='debate'){
       const a = document.getElementById('sideALabel').value.trim() || 'Side A';
       const b = document.getElementById('sideBLabel').value.trim() || 'Side B';
-      topic.sideLabels = [a,b];
+      topicRow.side_labels = [a,b];
     }
+
     try{
-      state.topics.push(topic);
-      await saveTopics();
+      const { data, error } = await supabase.from('topics').insert(topicRow).select().single();
+      if(error) throw error;
+      const topic = mapTopicRow(data);
+      state.topics.unshift(topic);
       state.myTopicIds.add(topic.id);
       persistMyIds();
+      state.route = { view:'detail', id: topic.id };
+    }catch(e){
+      console.error('Failed to create topic/debate:', e);
+      alert("Couldn't create that — check your Supabase setup/connection and try again.");
     } finally {
       wrap.remove();
     }
-    state.route = { view:'detail', id: topic.id };
     render();
   };
 }
@@ -1634,11 +1742,18 @@ document.addEventListener('click', () => {
 
 async function init(){
   loadMyIds();
+  if(CONFIG_IS_PLACEHOLDER){
+    state.setupNeeded = true;
+    state.loading = false;
+    render();
+    return;
+  }
   await loadTopics();
   state.loading = false;
   render();
 }
 init();
+
 </script>
 
 </body>
