@@ -992,6 +992,10 @@ border-radius:18px;
 padding:18px;
 display:flex;
 gap:14px;
+transition:border-color .2s, box-shadow .2s;
+}
+@media (hover:hover) and (pointer:fine){
+.opinion-item:hover{border-color:var(--border-soft2);box-shadow:0 4px 18px var(--shadow-card);}
 }
 .opinion-item.top{border-color:var(--accent-bright);background:var(--top-bg);}
 .opinion-item .vote-col{
@@ -1016,8 +1020,87 @@ font-size:16px;
 }
 .vote-arrow.voted{background:var(--accent);color:white;border-color:var(--accent);}
 .vote-count{font-weight:800;font-size:15px;color:var(--text-primary);}
-.opinion-text{font-size:15px;line-height:1.6;margin-bottom:8px;white-space:pre-line;}
+.opinion-text{font-size:15px;line-height:1.6;margin:8px 0;white-space:pre-line;}
 .opinion-author{font-size:12.5px;color:var(--text-tertiary2);}
+
+/* ---------- avatars + author rows ---------- */
+.mini-avatar{
+width:24px;height:24px;border-radius:50%;
+display:flex;align-items:center;justify-content:center;
+font-size:11.5px;font-weight:800;color:#fff;flex-shrink:0;
+}
+.opinion-author-row{display:flex;align-items:center;gap:8px;}
+.opinion-author-name{font-weight:700;font-size:13.5px;color:var(--text-primary);}
+.opinion-actions{display:flex;align-items:center;gap:6px;margin-top:4px;}
+.edited-tag{color:var(--text-tertiary);font-style:italic;font-weight:500;}
+
+/* ---------- inline edit forms (opinions + replies) ---------- */
+.edit-form{margin:8px 0;display:flex;flex-direction:column;gap:8px;}
+.edit-textarea{
+width:100%;
+padding:11px 13px;
+border-radius:12px;
+border:1px solid var(--accent);
+background:var(--bg-surface);
+color:var(--text-primary);
+font-size:14px;
+font-family:inherit;
+resize:vertical;
+min-height:64px;
+outline:none;
+}
+.edit-form-row{display:flex;justify-content:flex-end;gap:8px;}
+.cancel-edit-btn{
+background:none;
+border:1px solid var(--border);
+color:var(--text-secondary);
+padding:6px 14px;
+border-radius:999px;
+font-size:12.5px;
+font-weight:700;
+}
+.save-edit-btn{
+background:var(--accent);
+color:white;
+border:none;
+padding:6px 16px;
+border-radius:999px;
+font-size:12.5px;
+font-weight:700;
+}
+@media (hover:hover) and (pointer:fine){
+.cancel-edit-btn:hover{border-color:var(--text-secondary);}
+.save-edit-btn:hover{opacity:.9;}
+}
+
+/* ---------- "Replying to @Name" tag pill ---------- */
+.replying-to-pill{
+display:inline-flex;
+align-items:center;
+gap:6px;
+background:var(--accent-light);
+color:var(--accent);
+font-size:12px;
+font-weight:700;
+padding:5px 8px 5px 12px;
+border-radius:999px;
+width:fit-content;
+}
+.replying-to-name{font-weight:800;}
+.replying-to-pill button{
+background:none;
+border:none;
+color:var(--accent);
+font-weight:800;
+cursor:pointer;
+padding:2px 4px;
+font-size:12px;
+line-height:1;
+border-radius:50%;
+}
+@media (hover:hover) and (pointer:fine){
+.replying-to-pill button:hover{background:rgba(0,0,0,.08);}
+}
 
 /* ---------- replies ---------- */
 .reply-toggle{
@@ -1038,31 +1121,44 @@ padding-left:16px;
 border-left:2px solid var(--border-soft);
 display:flex;
 flex-direction:column;
-gap:12px;
+gap:10px;
 }
 .reply-item{
 font-size:13.5px;
 line-height:1.55;
+background:var(--bg-surface-alt);
+border-radius:14px;
+padding:10px 14px;
 }
+.reply-header{
+display:flex;
+align-items:center;
+gap:8px;
+margin-bottom:5px;
+}
+.reply-author-name{font-weight:700;font-size:12.5px;color:var(--text-primary);}
+.reply-time{font-size:11px;color:var(--text-tertiary);}
 .reply-item .reply-text{color:var(--text-primary);white-space:pre-line;}
 .reply-item .reply-meta{
 display:flex;
-gap:10px;
+gap:12px;
 align-items:center;
 color:var(--text-tertiary);
 font-size:11.5px;
-margin-top:4px;
+margin-top:6px;
+flex-wrap:wrap;
 }
 .reply-meta button{
 background:none;
 border:none;
 color:var(--text-tertiary);
 font-size:11.5px;
-font-weight:600;
+font-weight:700;
 padding:0;
 }
 @media (hover:hover) and (pointer:fine){
-.reply-meta button:hover{color:var(--danger);}
+.reply-meta button:hover{color:var(--accent);}
+.reply-meta button[data-delete-reply]:hover{color:var(--danger);}
 }
 .reply-form{
 margin-top:12px;
@@ -1386,8 +1482,21 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 const CONFIG_IS_PLACEHOLDER = SUPABASE_URL === "YOUR_SUPABASE_URL";
 let supabase = null;
+let clientInitError = null;
 if(!CONFIG_IS_PLACEHOLDER){
-  supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  try{
+    supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: {
+        flowType: 'pkce',
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+      }
+    });
+  }catch(e){
+    console.error('Failed to initialize Supabase client:', e);
+    clientInitError = e;
+  }
 }
 
 const THEME_KEY = 'viewpoint-theme';
@@ -1405,11 +1514,16 @@ let state = {
   repliesByOpinion: {},   // opinionId -> array of replies, loaded alongside detailOpinions
   openRepliesFor: new Set(),  // opinion ids whose reply thread is currently expanded
   openMenuFor: null,
+  replyingTo: {},        // opinionId -> { userId, name } of the person the open reply box is tagging
+  editingOpinionId: null,// id of the opinion currently showing its inline edit box, if any
+  editingReplyId: null,  // id of the reply currently showing its inline edit box, if any
 
   // auth
   user: null,          // supabase auth user object, or null if signed out
   profile: null,        // { id, display_name, avatar_url }
   authReady: false,     // becomes true once we've checked for an existing session
+  authProcessing: false,// true while we're mid-way through handling a Google sign-in redirect
+  authError: null,      // human-readable message if sign-in failed or stalled
   userMenuOpen: false,
 
   // per-user vote tracking (loaded from the DB, not just this browser session)
@@ -1458,6 +1572,9 @@ function renderMenu(menuId, kind, targetId, isOwner, label){
   const items = [];
   if(isOwner && kind === 'topic'){
     items.push(`<button class="menu-item" data-edit-topic="${targetId}">✏️ Edit ${label}</button>`);
+  }
+  if(isOwner && kind === 'opinion'){
+    items.push(`<button class="menu-item" data-edit-opinion="${targetId}">✏️ Edit ${label}</button>`);
   }
   if(state.user){
     items.push(`<button class="menu-item" data-report="${kind}:${targetId}">🚩 Report</button>`);
@@ -1790,6 +1907,7 @@ function mapOpinionRow(row){
     side: row.side,
     votes: row.votes,
     createdAt: new Date(row.created_at).getTime(),
+    editedAt: row.edited_at ? new Date(row.edited_at).getTime() : null,
   };
 }
 
@@ -1801,7 +1919,21 @@ function mapReplyRow(row){
     author: row.author,
     userId: row.user_id,
     createdAt: new Date(row.created_at).getTime(),
+    editedAt: row.edited_at ? new Date(row.edited_at).getTime() : null,
   };
+}
+
+/* ---------- little avatar chips for opinions/replies ---------- */
+const AVATAR_COLORS = ['#2F855A','#B8623F','#4A6FA5','#8E5FB0','#4F9D8E','#A57B2F','#B8503F','#3F7FB8'];
+function avatarColorFor(name){
+  const str = name || 'A';
+  let hash = 0;
+  for(let i=0;i<str.length;i++) hash = str.charCodeAt(i) + ((hash<<5)-hash);
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
+function miniAvatar(name){
+  const n = name || 'Anonymous';
+  return `<div class="mini-avatar" style="background:${avatarColorFor(n)};">${escapeHtml(n.slice(0,1).toUpperCase())}</div>`;
 }
 
 async function loadTopics(){
@@ -1960,6 +2092,28 @@ async function render(){
         near the top of the &lt;script&gt; tag, and paste in your project's real values.
         You'll find them in the Supabase dashboard under Project Settings → API.
       </div></div>`;
+    return;
+  }
+
+  if(state.authProcessing){
+    root.innerHTML = `<div class="wrapper"><div class="empty-state" style="grid-column:1/-1;"><div class="big">🔑</div>Signing you in…</div></div>`;
+    return;
+  }
+
+  if(state.authError){
+    root.innerHTML = `
+      <div class="wrapper"><div class="empty-state" style="grid-column:1/-1;text-align:left;max-width:640px;margin:40px auto;">
+        <div class="big">⚠️</div>
+        <strong>Sign-in didn't go through.</strong><br><br>
+        ${escapeHtml(state.authError)}
+        <br><br>
+        <button class="post-btn" id="authErrorRetryBtn">Try signing in again</button>
+        <button class="cancel-btn" id="authErrorDismissBtn" style="margin-left:10px;">Continue without signing in</button>
+      </div></div>`;
+    const retry = document.getElementById('authErrorRetryBtn');
+    if(retry) retry.onclick = () => { state.authError = null; signInWithGoogle(); };
+    const dismiss = document.getElementById('authErrorDismissBtn');
+    if(dismiss) dismiss.onclick = () => { state.authError = null; render(); };
     return;
   }
 
@@ -2272,20 +2426,45 @@ async function renderDetail(id){
 
     const replyItem = (r) => {
       const mineReply = state.user && r.userId === state.user.id;
+      const isEditingReply = state.editingReplyId === r.id;
+      const editedBit = r.editedAt ? ` · <span class="edited-tag">edited</span>` : '';
       return `
         <div class="reply-item">
-          <div class="reply-text">${renderMentionText(r.text)}</div>
+          <div class="reply-header">
+            ${miniAvatar(r.author)}
+            <span class="reply-author-name">${escapeHtml(r.author || 'Anonymous')}</span>
+            <span class="reply-time">${timeAgo(r.createdAt)}${editedBit}</span>
+          </div>
+          ${ isEditingReply ? `
+            <div class="edit-form">
+              <textarea id="editReplyText-${r.id}" class="mention-input edit-textarea">${escapeHtml(r.text)}</textarea>
+              <div class="edit-form-row">
+                <button type="button" class="cancel-edit-btn" data-cancel-edit-reply="${r.id}">Cancel</button>
+                <button type="button" class="save-edit-btn" data-save-edit-reply="${r.id}:${op.id}">Save</button>
+              </div>
+            </div>
+          ` : `<div class="reply-text">${renderMentionText(r.text)}</div>` }
           <div class="reply-meta">
-            <span>${escapeHtml(r.author || 'Anonymous')} · ${timeAgo(r.createdAt)}</span>
+            ${state.user ? `<button data-reply-to-reply="${r.id}" data-reply-to-op="${op.id}">↩ Reply</button>` : ''}
             ${state.user ? `<button data-report-reply="${r.id}">Report</button>` : ''}
+            ${mineReply ? `<button data-edit-reply="${r.id}">Edit</button>` : ''}
             ${mineReply ? `<button data-delete-reply="${r.id}:${op.id}">Delete</button>` : ''}
           </div>
         </div>
       `;
     };
 
+    const replyTarget = state.replyingTo[op.id];
+    const replyingToPill = replyTarget ? `
+      <div class="replying-to-pill">
+        Replying to <span class="replying-to-name">@${escapeHtml(replyTarget.name)}</span>
+        <button type="button" data-cancel-reply-to="${op.id}" aria-label="Cancel reply">✕</button>
+      </div>
+    ` : '';
+
     const replyForm = state.user ? `
       <div class="reply-form">
+        ${replyingToPill}
         <textarea id="replyText-${op.id}" class="mention-input" placeholder="Write a reply… (type @ to tag someone)"></textarea>
         <div class="reply-form-row">
           <span class="posting-as" style="margin:0;">Posting as ${escapeHtml(displayName())}</span>
@@ -2294,20 +2473,38 @@ async function renderDetail(id){
       </div>
     ` : `<div class="reply-form"><span class="reply-signin-note">🔑 <a href="#" data-reply-signin="1" style="color:var(--accent);font-weight:700;">Sign in with Google</a> to reply.</span></div>`;
 
+    const isEditingOp = state.editingOpinionId === op.id;
+    const opEditedBit = op.editedAt ? ` · <span class="edited-tag">edited</span>` : '';
+
     return `
       <div class="opinion-item ${isTop ? 'top':''}">
         <div class="vote-col">
           <button class="vote-arrow ${voted?'voted':''}" data-vote="${op.id}" aria-label="${voted ? 'Remove your vote' : 'Upvote'}" title="${voted ? 'Click to remove your vote' : 'Upvote'}">▲</button>
           <div class="vote-count">${op.votes}</div>
         </div>
-        <div style="flex:1;">
+        <div style="flex:1;min-width:0;">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
-            <div>${isTop ? `<div class="top-badge">TOP</div>` : ''}</div>
+            <div class="opinion-author-row">
+              ${miniAvatar(op.author)}
+              <span class="opinion-author-name">${escapeHtml(op.author || 'Anonymous')}</span>
+              ${isTop ? `<div class="top-badge">TOP</div>` : ''}
+            </div>
             ${renderMenu('opinion-'+op.id, 'opinion', op.id, mineOp, 'opinion')}
           </div>
-          <div class="opinion-text">${renderMentionText(op.text)}</div>
-          <div class="opinion-author">${escapeHtml(op.author || 'Anonymous')} · ${timeAgo(op.createdAt)}</div>
-          <button class="reply-toggle" data-toggle-replies="${op.id}">${repliesOpen ? '▲ Hide' : replyLabel}</button>
+          ${ isEditingOp ? `
+            <div class="edit-form">
+              <textarea id="editOpText-${op.id}" class="mention-input edit-textarea">${escapeHtml(op.text)}</textarea>
+              <div class="edit-form-row">
+                <button type="button" class="cancel-edit-btn" data-cancel-edit-opinion="${op.id}">Cancel</button>
+                <button type="button" class="save-edit-btn" data-save-edit-opinion="${op.id}">Save</button>
+              </div>
+            </div>
+          ` : `<div class="opinion-text">${renderMentionText(op.text)}</div>` }
+          <div class="opinion-author">${timeAgo(op.createdAt)}${opEditedBit}</div>
+          <div class="opinion-actions">
+            <button class="reply-toggle" data-toggle-replies="${op.id}">${repliesOpen ? '▲ Hide' : replyLabel}</button>
+            ${state.user ? `<button class="reply-toggle" data-reply-to-opinion="${op.id}">↩ Reply</button>` : ''}
+          </div>
           ${ repliesOpen ? `
             ${ replies.length ? `<div class="replies-wrap">${replies.map(replyItem).join('')}</div>` : '' }
             ${replyForm}
@@ -2487,6 +2684,56 @@ function bindEvents(){
     };
   });
 
+  document.querySelectorAll('[data-edit-opinion]').forEach(el=>{
+    el.onclick = (e) => {
+      e.stopPropagation();
+      state.openMenuFor = null;
+      state.editingOpinionId = el.dataset.editOpinion;
+      render();
+    };
+  });
+  document.querySelectorAll('[data-cancel-edit-opinion]').forEach(el=>{
+    el.onclick = (e) => { e.stopPropagation(); state.editingOpinionId = null; render(); };
+  });
+  document.querySelectorAll('[data-save-edit-opinion]').forEach(el=>{
+    el.onclick = (e) => { e.stopPropagation(); saveEditOpinion(el.dataset.saveEditOpinion); };
+  });
+
+  document.querySelectorAll('[data-edit-reply]').forEach(el=>{
+    el.onclick = (e) => { e.stopPropagation(); state.editingReplyId = el.dataset.editReply; render(); };
+  });
+  document.querySelectorAll('[data-cancel-edit-reply]').forEach(el=>{
+    el.onclick = (e) => { e.stopPropagation(); state.editingReplyId = null; render(); };
+  });
+  document.querySelectorAll('[data-save-edit-reply]').forEach(el=>{
+    el.onclick = (e) => {
+      e.stopPropagation();
+      const [replyId, opinionId] = el.dataset.saveEditReply.split(':');
+      saveEditReply(replyId, opinionId);
+    };
+  });
+
+  document.querySelectorAll('[data-reply-to-reply]').forEach(el=>{
+    el.onclick = (e) => {
+      e.stopPropagation();
+      const opId = el.dataset.replyToOp;
+      const list = state.repliesByOpinion[opId] || [];
+      const r = list.find(x=>x.id===el.dataset.replyToReply);
+      if(r) setReplyTarget(opId, r.userId, r.author || 'Anonymous');
+    };
+  });
+  document.querySelectorAll('[data-reply-to-opinion]').forEach(el=>{
+    el.onclick = (e) => {
+      e.stopPropagation();
+      const opId = el.dataset.replyToOpinion;
+      const op = state.detailOpinions.find(x=>x.id===opId);
+      if(op) setReplyTarget(opId, op.userId, op.author || 'Anonymous');
+    };
+  });
+  document.querySelectorAll('[data-cancel-reply-to]').forEach(el=>{
+    el.onclick = (e) => { e.stopPropagation(); clearReplyTarget(el.dataset.cancelReplyTo); };
+  });
+
   document.querySelectorAll('[data-report]').forEach(el=>{
     el.onclick = (e) => {
       e.stopPropagation();
@@ -2637,6 +2884,85 @@ function deleteOpinion(opinionId){
   });
 }
 
+/** Opens (and tags) the reply box for an opinion, aiming it at a specific person — either the opinion's author or the author of one of its replies. Mirrors the "Reply" affordance on Reddit/Facebook/etc. */
+async function setReplyTarget(opinionId, targetUserId, targetName){
+  if(!requireLogin('reply')) return;
+  state.openRepliesFor.add(opinionId);
+  state.replyingTo[opinionId] = { userId: targetUserId, name: targetName };
+  await render();
+  const ta = document.getElementById('replyText-'+opinionId);
+  if(ta){
+    ta.value = `@${targetName} `;
+    if(targetUserId){
+      mentionSelections[ta.id] = [{ id: targetUserId, name: targetName }];
+    }
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+    ta.scrollIntoView({ block:'nearest', behavior:'smooth' });
+  }
+}
+
+/** Clears the "Replying to @Name" tag on an opinion's reply box, stripping the auto-inserted mention from the top of whatever's been typed. */
+async function clearReplyTarget(opinionId){
+  delete state.replyingTo[opinionId];
+  const key = 'replyText-'+opinionId;
+  const existing = document.getElementById(key);
+  const remainingText = existing ? existing.value.replace(/^@\S+(?:\s\S+){0,2}\s*/, '') : '';
+  mentionSelections[key] = [];
+  await render();
+  const ta = document.getElementById(key);
+  if(ta){ ta.value = remainingText; ta.focus(); }
+}
+
+async function saveEditOpinion(opinionId){
+  const ta = document.getElementById('editOpText-'+opinionId);
+  if(!ta) return;
+  const text = ta.value.trim();
+  if(!text) return;
+  const btn = document.querySelector(`[data-save-edit-opinion="${opinionId}"]`);
+  if(btn){ btn.disabled = true; btn.style.opacity = '0.6'; btn.textContent = 'Saving…'; }
+  try{
+    // RLS only allows this to succeed if the current user owns the row.
+    const { data, error } = await supabase.from('opinions')
+      .update({ text, edited_at: new Date().toISOString() })
+      .eq('id', opinionId).select().single();
+    if(error) throw error;
+    const updated = mapOpinionRow(data);
+    const idx = state.detailOpinions.findIndex(o=>o.id===opinionId);
+    if(idx !== -1) state.detailOpinions[idx] = updated;
+  }catch(e){
+    console.error('Failed to save edited opinion:', e);
+    alert("Couldn't save your edit — check your connection and try again.");
+  }
+  state.editingOpinionId = null;
+  render();
+}
+
+async function saveEditReply(replyId, opinionId){
+  const ta = document.getElementById('editReplyText-'+replyId);
+  if(!ta) return;
+  const text = ta.value.trim();
+  if(!text) return;
+  const btn = document.querySelector(`[data-save-edit-reply="${replyId}:${opinionId}"]`);
+  if(btn){ btn.disabled = true; btn.style.opacity = '0.6'; btn.textContent = 'Saving…'; }
+  try{
+    // RLS only allows this to succeed if the current user owns the row.
+    const { data, error } = await supabase.from('opinion_replies')
+      .update({ text, edited_at: new Date().toISOString() })
+      .eq('id', replyId).select().single();
+    if(error) throw error;
+    const updated = mapReplyRow(data);
+    const list = state.repliesByOpinion[opinionId] || [];
+    const idx = list.findIndex(r=>r.id===replyId);
+    if(idx !== -1) list[idx] = updated;
+  }catch(e){
+    console.error('Failed to save edited reply:', e);
+    alert("Couldn't save your edit — check your connection and try again.");
+  }
+  state.editingReplyId = null;
+  render();
+}
+
 let isSubmittingReply = false;
 
 async function submitReply(opinionId){
@@ -2664,6 +2990,7 @@ async function submitReply(opinionId){
     if(!state.repliesByOpinion[opinionId]) state.repliesByOpinion[opinionId] = [];
     state.repliesByOpinion[opinionId].push(reply);
     state.openRepliesFor.add(opinionId);
+    delete state.replyingTo[opinionId];
     const t = state.topics.find(x=>x.id===state.route.id);
     await notifyMentions('replyText-'+opinionId, text, 'reply', t ? t.id : null);
   }catch(e){
@@ -3018,15 +3345,49 @@ document.addEventListener('click', () => {
   }
 });
 
+/**
+ * Strips Google/Supabase OAuth params (PKCE ?code=, old-style #access_token=,
+ * or ?error=) out of the address bar once we're done with them, so refreshing
+ * the page never re-processes a stale/already-used code.
+ */
+function cleanAuthParamsFromUrl(){
+  try{
+    const url = new URL(window.location.href);
+    ['code','error','error_code','error_description','state'].forEach(k => url.searchParams.delete(k));
+    if(/access_token|refresh_token|error/.test(url.hash)) url.hash = '';
+    window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);
+  }catch(e){ /* non-fatal */ }
+}
+
 async function init(){
   initTheme();
 
-  if(CONFIG_IS_PLACEHOLDER){
+  if(CONFIG_IS_PLACEHOLDER || clientInitError || !supabase){
     state.setupNeeded = true;
     state.loading = false;
     render();
     return;
   }
+
+  // Figure out whether this page load is actually Google bouncing us back
+  // after a sign-in attempt, so we can show a clear "Signing you in…" state
+  // (or a clear error) instead of letting the normal signed-out home page
+  // flash by while Supabase finishes processing things in the background.
+  const searchParams = new URLSearchParams(window.location.search);
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+  const hasAuthCode = searchParams.has('code');
+  const hasImplicitToken = hashParams.has('access_token');
+  const authErrorDesc = searchParams.get('error_description') || hashParams.get('error_description')
+    || searchParams.get('error') || hashParams.get('error');
+
+  if(authErrorDesc){
+    state.authError = decodeURIComponent(String(authErrorDesc)).replace(/\+/g, ' ');
+    cleanAuthParamsFromUrl();
+  } else if(hasAuthCode || hasImplicitToken){
+    state.authProcessing = true;
+  }
+
+  let authSettled = !state.authProcessing;
 
   // Listen for auth changes (sign in, sign out, token refresh, and the
   // redirect back from Google) and keep our local state in sync.
@@ -3035,6 +3396,11 @@ async function init(){
     const userChanged = (newUser?.id || null) !== (state.user?.id || null);
     state.user = newUser;
     state.authReady = true;
+    if(state.authProcessing){
+      state.authProcessing = false;
+      authSettled = true;
+      cleanAuthParamsFromUrl();
+    }
     if(newUser && userChanged){
       await upsertProfile(newUser);
       await loadUserVotes();
@@ -3051,6 +3417,23 @@ async function init(){
     if(!state.loading) render();
   });
 
+  if(state.authProcessing){
+    render(); // shows "Signing you in…" right away instead of a signed-out flash
+    // Safety net: some browsers can't complete the sign-in redirect at all —
+    // most commonly private/incognito windows, in-app browsers (the webview
+    // inside Instagram, Facebook, TikTok, etc.), or extensions that block
+    // site storage. Supabase fails quietly in that case, so without this
+    // timeout the person would just be stuck on "Signing you in…" forever.
+    setTimeout(() => {
+      if(!authSettled && state.authProcessing){
+        state.authProcessing = false;
+        state.authError = "This can happen in private/incognito windows, in-app browsers (like the one built into Instagram, Facebook or TikTok), or if a browser extension is blocking site storage/cookies. Try opening this page in Chrome or Safari directly with cookies allowed, then sign in again.";
+        cleanAuthParamsFromUrl();
+        render();
+      }
+    }, 10000);
+  }
+
   const { data: { session } } = await supabase.auth.getSession();
   state.user = session ? session.user : null;
   state.authReady = true;
@@ -3063,7 +3446,7 @@ async function init(){
   await loadTopics();
   setupRealtime();
   state.loading = false;
-  render();
+  if(!state.authProcessing) render();
 }
 init();
 
