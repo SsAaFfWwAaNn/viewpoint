@@ -298,6 +298,7 @@ font-size:13px;
 }
 
 .auth-wrap{position:relative;}
+.auth-buttons{display:flex;align-items:center;gap:8px;flex-shrink:0;}
 .signin-btn{
 display:flex;
 align-items:center;
@@ -313,6 +314,14 @@ white-space:nowrap;
 }
 @media (hover:hover) and (pointer:fine){
 .signin-btn:hover{border-color:var(--accent);}
+}
+.signin-btn.primary{
+background:var(--accent);
+border-color:var(--accent);
+color:#fff;
+}
+@media (hover:hover) and (pointer:fine){
+.signin-btn.primary:hover{background:var(--accent-mid);border-color:var(--accent-mid);}
 }
 .avatar-btn{
 display:flex;
@@ -390,6 +399,33 @@ margin-top:10px;
 font-size:12.5px;
 color:var(--text-tertiary);
 margin-bottom:10px;
+}
+
+/* ---------- @mention tagging ---------- */
+.mention-tag{
+color:var(--accent);
+font-weight:700;
+}
+.mention-dropdown{
+position:fixed;
+display:none;
+background:var(--bg-surface);
+border:1px solid var(--border);
+border-radius:12px;
+box-shadow:0 12px 28px var(--shadow-card);
+max-height:220px;
+overflow-y:auto;
+z-index:200;
+min-width:180px;
+}
+.mention-suggestion{
+padding:9px 13px;
+font-size:13.5px;
+color:var(--text-primary);
+cursor:pointer;
+}
+@media (hover:hover) and (pointer:fine){
+.mention-suggestion:hover{background:var(--bg-surface-alt);}
 }
 .modal select#reportReason{
 width:100%;
@@ -1278,8 +1314,8 @@ border-radius:16px;
 .icon-btn{width:34px;height:34px;font-size:15px;border-radius:10px;}
 .avatar-name{display:none;}
 .avatar-btn{padding:4px;}
-.signin-btn span.signin-label{display:none;}
-.signin-btn{padding:8px 10px;}
+.signin-btn{padding:8px 12px;font-size:12.5px;gap:0;}
+.auth-buttons{gap:6px;}
 .notif-dropdown{width:300px;}
 
 footer{padding:24px 16px;font-size:12px;}
@@ -1329,6 +1365,7 @@ Viewpoint
 </header>
 
 <div id="root"></div>
+<div id="mentionDropdown" class="mention-dropdown"></div>
 
 <footer>
 
@@ -1456,8 +1493,10 @@ function storageSet(key, value){
 function initTheme(){
   let theme = null;
   try{ theme = localStorage.getItem(THEME_KEY); }catch(e){}
+  // First-ever visit (nothing saved yet): always start in light mode,
+  // regardless of the visitor's system/browser dark-mode preference.
   if(!theme){
-    theme = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+    theme = 'light';
   }
   applyTheme(theme);
 }
@@ -1607,7 +1646,116 @@ function notifText(n){
   if(n.type === 'reply_to_opinion'){
     return `<strong>${actor}</strong> replied to your opinion: "${escapeHtml((n.message||'').slice(0,80))}"`;
   }
+  if(n.type === 'mention'){
+    return `<strong>${actor}</strong> tagged you in a ${escapeHtml(n.context_label||'reply')}: "${escapeHtml((n.message||'').slice(0,80))}"`;
+  }
   return escapeHtml(n.message || 'You have a new notification.');
+}
+
+/* ---------- @mention tagging ---------- */
+
+// Selections the user has picked from the autocomplete dropdown, keyed by
+// the textarea's element id (e.g. "opText" or "replyText-<opinionId>").
+let mentionSelections = {};
+
+/** Looks up users by display name for the @mention autocomplete dropdown. */
+async function searchProfilesForMention(query){
+  if(!supabase || !query) return [];
+  try{
+    const { data, error } = await supabase.from('profiles')
+      .select('id,display_name,avatar_url')
+      .ilike('display_name', `%${query}%`)
+      .limit(6);
+    if(error) throw error;
+    return data || [];
+  }catch(e){
+    console.error('Failed to search profiles for mention:', e);
+    return [];
+  }
+}
+
+/**
+ * Renders posted text with any "@Name" mentions highlighted. This is a
+ * cosmetic pattern-match (it doesn't re-verify the name is a real user) so
+ * it can't fully replace copyright-safe rendering rules, but it's fine for
+ * highlighting plain user-authored text.
+ */
+function renderMentionText(text){
+  const escaped = escapeHtml(text);
+  return escaped.replace(/@([A-Za-z0-9_]+(?:\s[A-Za-z0-9_]+){0,2})(?=[\s.,!?;:()]|$)/g, (m, name) => `<span class="mention-tag">@${name}</span>`);
+}
+
+/** Notifies every user tagged with @ in a just-posted opinion/reply. */
+async function notifyMentions(key, text, contextLabel, topicId){
+  const mentions = mentionSelections[key] || [];
+  mentionSelections[key] = [];
+  if(!mentions.length || !state.user) return;
+  const rows = mentions
+    .filter(m => m.id !== state.user.id) // don't notify yourself
+    .map(m => ({
+      recipient_id: m.id,
+      actor_id: state.user.id,
+      actor_name: displayName(),
+      type: 'mention',
+      message: text.slice(0,80),
+      context_label: contextLabel,
+      topic_id: topicId,
+      is_read: false,
+    }));
+  if(!rows.length) return;
+  try{
+    const { error } = await supabase.from('notifications').insert(rows);
+    if(error) throw error;
+  }catch(e){
+    console.error('Failed to notify mentioned users:', e);
+  }
+}
+
+/** Wires up @mention autocomplete on every textarea with class "mention-input" in the current render. */
+function bindMentionInputs(){
+  const dropdown = document.getElementById('mentionDropdown');
+  if(!dropdown) return;
+  document.querySelectorAll('textarea.mention-input').forEach(ta => {
+    let debounceTimer = null;
+    const hide = () => { dropdown.style.display = 'none'; };
+
+    ta.addEventListener('input', () => {
+      const key = ta.id;
+      const val = ta.value;
+      const pos = ta.selectionStart;
+      const upToCursor = val.slice(0, pos);
+      const match = upToCursor.match(/@([A-Za-z0-9_' -]{1,30})$/);
+      if(!match){ hide(); return; }
+      const query = match[1].trim();
+      clearTimeout(debounceTimer);
+      if(!query){ hide(); return; }
+      debounceTimer = setTimeout(async () => {
+        const results = await searchProfilesForMention(query);
+        if(!results.length){ hide(); return; }
+        const rect = ta.getBoundingClientRect();
+        dropdown.style.left = Math.round(rect.left) + 'px';
+        dropdown.style.top = Math.round(rect.bottom + 4) + 'px';
+        dropdown.style.width = Math.min(Math.max(rect.width, 180), 280) + 'px';
+        dropdown.innerHTML = results.map(p=>`<div class="mention-suggestion" data-id="${p.id}" data-name="${escapeHtml(p.display_name)}">${escapeHtml(p.display_name)}</div>`).join('');
+        dropdown.style.display = 'block';
+        dropdown.querySelectorAll('.mention-suggestion').forEach(item=>{
+          item.onmousedown = (e) => {
+            e.preventDefault();
+            const id = item.dataset.id, name = item.dataset.name;
+            const before = val.slice(0, pos - query.length - 1);
+            const after = val.slice(pos);
+            ta.value = `${before}@${name} ${after}`;
+            if(!mentionSelections[key]) mentionSelections[key] = [];
+            if(!mentionSelections[key].find(m=>m.id===id)) mentionSelections[key].push({id, name});
+            hide();
+            ta.focus();
+          };
+        });
+      }, 200);
+    });
+
+    ta.addEventListener('blur', () => { setTimeout(hide, 150); });
+  });
 }
 
 /* ---------- Supabase data layer ---------- */
@@ -1709,6 +1857,94 @@ function ensureStats(t){
   return t.stats;
 }
 
+/* ---------- Realtime sync ----------
+   This is what actually keeps votes/opinions/replies/notifications in sync
+   across everyone's browser at once, instead of only updating the person
+   who clicked and requiring everyone else to refresh the page to see it.
+   Requires Realtime to be turned on for these tables in Supabase — see the
+   SQL setup notes. */
+
+let topicsChannel = null, opinionsChannel = null, repliesChannel = null, notifChannel = null;
+
+function setupRealtime(){
+  if(!supabase || topicsChannel) return; // only ever set up once
+
+  // Any topic/debate's aggregate vote counts, opinion counts, edits, or
+  // deletions — from ANY user — get pushed here live.
+  topicsChannel = supabase.channel('sync-topics')
+    .on('postgres_changes', { event:'*', schema:'public', table:'topics' }, (payload) => {
+      if(payload.eventType === 'DELETE'){
+        const deletedId = payload.old.id;
+        state.topics = state.topics.filter(t=>t.id!==deletedId);
+        if(state.route.view==='detail' && state.route.id===deletedId){
+          state.route = { view:'home', id:null };
+        }
+      } else {
+        const mapped = mapTopicRow(payload.new);
+        const idx = state.topics.findIndex(t=>t.id===mapped.id);
+        if(idx===-1) state.topics.unshift(mapped);
+        else state.topics[idx] = mapped;
+      }
+      render();
+    })
+    .subscribe();
+
+  // Opinion/argument votes and new opinions, scoped to whichever topic is
+  // currently open.
+  opinionsChannel = supabase.channel('sync-opinions')
+    .on('postgres_changes', { event:'*', schema:'public', table:'opinions' }, (payload) => {
+      if(state.route.view !== 'detail') return;
+      const row = payload.new || payload.old;
+      if(!row || row.topic_id !== state.route.id) return;
+      if(payload.eventType === 'DELETE'){
+        state.detailOpinions = state.detailOpinions.filter(o=>o.id!==payload.old.id);
+      } else {
+        const mapped = mapOpinionRow(payload.new);
+        const idx = state.detailOpinions.findIndex(o=>o.id===mapped.id);
+        if(idx===-1) state.detailOpinions.push(mapped);
+        else state.detailOpinions[idx] = mapped;
+      }
+      render();
+    })
+    .subscribe();
+
+  // New replies (or reply deletions) on any opinion belonging to the topic
+  // currently open.
+  repliesChannel = supabase.channel('sync-replies')
+    .on('postgres_changes', { event:'*', schema:'public', table:'opinion_replies' }, (payload) => {
+      if(state.route.view !== 'detail') return;
+      const row = payload.new || payload.old;
+      if(!row) return;
+      const opinionId = row.opinion_id;
+      if(!state.detailOpinions.find(o=>o.id===opinionId)) return; // not part of the open topic
+      if(payload.eventType === 'DELETE'){
+        const list = state.repliesByOpinion[opinionId] || [];
+        state.repliesByOpinion[opinionId] = list.filter(r=>r.id!==payload.old.id);
+      } else {
+        const reply = mapReplyRow(payload.new);
+        if(!state.repliesByOpinion[opinionId]) state.repliesByOpinion[opinionId] = [];
+        const list = state.repliesByOpinion[opinionId];
+        const idx = list.findIndex(r=>r.id===reply.id);
+        if(idx===-1) list.push(reply); else list[idx] = reply;
+      }
+      render();
+    })
+    .subscribe();
+}
+
+/** (Re)subscribes to just-for-me notification pushes whenever the signed-in user changes. */
+function setupNotificationRealtime(){
+  if(notifChannel){ supabase.removeChannel(notifChannel); notifChannel = null; }
+  if(!supabase || !state.user) return;
+  notifChannel = supabase.channel('sync-notifs-'+state.user.id)
+    .on('postgres_changes', { event:'INSERT', schema:'public', table:'notifications', filter:`recipient_id=eq.${state.user.id}` }, (payload) => {
+      state.notifications.unshift(payload.new);
+      state.unreadCount += 1;
+      renderHeader();
+    })
+    .subscribe();
+}
+
 /* ---------- Render ---------- */
 
 async function render(){
@@ -1806,7 +2042,15 @@ function renderHeader(){
       </div>
     `;
   } else {
-    authBtn = `<button class="signin-btn" id="signInBtn">🔑 <span class="signin-label">Sign in with Google</span></button>`;
+    // Google OAuth handles new vs. returning accounts automatically, so both
+    // buttons trigger the same flow — we just show both words since that's
+    // what people expect to see and tap.
+    authBtn = `
+      <div class="auth-buttons">
+        <button class="signin-btn" id="logInBtn">Log In</button>
+        <button class="signin-btn primary" id="signInBtn">Sign In</button>
+      </div>
+    `;
   }
 
   el.innerHTML = `${themeBtn}${notifBtn}${authBtn}`;
@@ -1840,6 +2084,8 @@ function bindHeaderEvents(){
 
   const signInBtn = document.getElementById('signInBtn');
   if(signInBtn) signInBtn.onclick = () => signInWithGoogle();
+  const logInBtn = document.getElementById('logInBtn');
+  if(logInBtn) logInBtn.onclick = () => signInWithGoogle();
 
   const userMenuBtn = document.getElementById('userMenuBtn');
   if(userMenuBtn) userMenuBtn.onclick = (e) => {
@@ -2028,7 +2274,7 @@ async function renderDetail(id){
       const mineReply = state.user && r.userId === state.user.id;
       return `
         <div class="reply-item">
-          <div class="reply-text">${escapeHtml(r.text)}</div>
+          <div class="reply-text">${renderMentionText(r.text)}</div>
           <div class="reply-meta">
             <span>${escapeHtml(r.author || 'Anonymous')} · ${timeAgo(r.createdAt)}</span>
             ${state.user ? `<button data-report-reply="${r.id}">Report</button>` : ''}
@@ -2040,7 +2286,7 @@ async function renderDetail(id){
 
     const replyForm = state.user ? `
       <div class="reply-form">
-        <textarea id="replyText-${op.id}" placeholder="Write a reply…"></textarea>
+        <textarea id="replyText-${op.id}" class="mention-input" placeholder="Write a reply… (type @ to tag someone)"></textarea>
         <div class="reply-form-row">
           <span class="posting-as" style="margin:0;">Posting as ${escapeHtml(displayName())}</span>
           <button class="reply-submit-btn" data-submit-reply="${op.id}">Reply</button>
@@ -2059,7 +2305,7 @@ async function renderDetail(id){
             <div>${isTop ? `<div class="top-badge">TOP</div>` : ''}</div>
             ${renderMenu('opinion-'+op.id, 'opinion', op.id, mineOp, 'opinion')}
           </div>
-          <div class="opinion-text">${escapeHtml(op.text)}</div>
+          <div class="opinion-text">${renderMentionText(op.text)}</div>
           <div class="opinion-author">${escapeHtml(op.author || 'Anonymous')} · ${timeAgo(op.createdAt)}</div>
           <button class="reply-toggle" data-toggle-replies="${op.id}">${repliesOpen ? '▲ Hide' : replyLabel}</button>
           ${ repliesOpen ? `
@@ -2111,7 +2357,7 @@ async function renderDetail(id){
       <div class="opinion-form">
         <h4>Add your argument</h4>
         ${postingAs}
-        <textarea id="opText" placeholder="Make your case…"></textarea>
+        <textarea id="opText" class="mention-input" placeholder="Make your case… (type @ to tag someone)"></textarea>
         <div class="opinion-form-row">
           <select id="opSide">
             <option value="a">${escapeHtml(labels[0])}</option>
@@ -2150,7 +2396,7 @@ async function renderDetail(id){
       <div class="opinion-form">
         <h4>Add your opinion</h4>
         ${postingAs}
-        <textarea id="opText" placeholder="What do you think?"></textarea>
+        <textarea id="opText" class="mention-input" placeholder="What do you think? (type @ to tag someone)"></textarea>
         <div class="opinion-form-row">
           <button class="post-btn" id="submitOpinion">Post Opinion</button>
         </div>
@@ -2279,6 +2525,8 @@ function bindEvents(){
   document.querySelectorAll('[data-reply-signin]').forEach(el=>{
     el.onclick = (e) => { e.preventDefault(); e.stopPropagation(); signInWithGoogle(); };
   });
+
+  bindMentionInputs();
 }
 
 function renderInPlace(){
@@ -2322,6 +2570,7 @@ async function submitOpinion(){
     const stats = ensureStats(t);
     stats.opinionCount += 1;
     await supabase.rpc('increment_opinion_count', { p_topic_id: t.id });
+    await notifyMentions('opText', text, t.type==='debate' ? 'argument' : 'opinion', t.id);
   }catch(e){
     console.error('Failed to post opinion:', e);
     alert("Couldn't post that — check your Supabase setup/connection and try again.");
@@ -2415,6 +2664,8 @@ async function submitReply(opinionId){
     if(!state.repliesByOpinion[opinionId]) state.repliesByOpinion[opinionId] = [];
     state.repliesByOpinion[opinionId].push(reply);
     state.openRepliesFor.add(opinionId);
+    const t = state.topics.find(x=>x.id===state.route.id);
+    await notifyMentions('replyText-'+opinionId, text, 'reply', t ? t.id : null);
   }catch(e){
     console.error('Failed to post reply:', e);
     alert("Couldn't post that reply — check your connection and try again.");
@@ -2472,39 +2723,47 @@ async function castVote(opinionId){
   const t = state.topics.find(x=>x.id===state.route.id);
   const stats = ensureStats(t);
   const alreadyVoted = state.votedOpinionIds.has(opinionId);
-  const delta = alreadyVoted ? -1 : 1;
 
-  if(alreadyVoted){
-    op.votes = Math.max(0, op.votes - 1);
-    state.votedOpinionIds.delete(opinionId);
-    stats.voteCount = Math.max(0, stats.voteCount - 1);
-    if(t.type==='debate'){
-      if(op.side==='a') stats.sideAVotes = Math.max(0, stats.sideAVotes - 1);
-      else stats.sideBVotes = Math.max(0, stats.sideBVotes - 1);
-    }
-  } else {
-    op.votes += 1;
-    state.votedOpinionIds.add(opinionId);
-    stats.voteCount += 1;
-    if(t.type==='debate'){
-      if(op.side==='a') stats.sideAVotes += 1; else stats.sideBVotes += 1;
-    }
-  }
-
-  render();
-
+  // Write to the database FIRST, then update local counts from the result —
+  // this is the fix for votes drifting out of sync: the old code updated the
+  // on-screen count before knowing whether the write actually happened,
+  // which could show a vote that never made it into the shared database
+  // (so other people never saw it, and it could vanish on refresh).
   try{
     if(alreadyVoted){
-      await supabase.from('opinion_votes').delete().eq('voter_id', state.user.id).eq('opinion_id', opinionId);
+      const { error } = await supabase.from('opinion_votes').delete().eq('voter_id', state.user.id).eq('opinion_id', opinionId);
+      if(error) throw error;
+      state.votedOpinionIds.delete(opinionId);
+      op.votes = Math.max(0, op.votes - 1);
+      stats.voteCount = Math.max(0, stats.voteCount - 1);
+      if(t.type==='debate'){
+        if(op.side==='a') stats.sideAVotes = Math.max(0, stats.sideAVotes - 1);
+        else stats.sideBVotes = Math.max(0, stats.sideBVotes - 1);
+      }
+      await supabase.rpc('vote_opinion', { p_opinion_id: opinionId, p_delta: -1 });
     } else {
       const { error } = await supabase.from('opinion_votes').insert({ voter_id: state.user.id, opinion_id: opinionId });
-      if(error && error.code === '23505'){ return; } // already voted server-side; state already reflects "voted"
+      if(error && error.code === '23505'){
+        // The database says this account already voted (e.g. from another
+        // tab or device) — one account, one vote — so just match that,
+        // without double-counting the aggregate.
+        state.votedOpinionIds.add(opinionId);
+        render();
+        return;
+      }
       if(error) throw error;
+      state.votedOpinionIds.add(opinionId);
+      op.votes += 1;
+      stats.voteCount += 1;
+      if(t.type==='debate'){
+        if(op.side==='a') stats.sideAVotes += 1; else stats.sideBVotes += 1;
+      }
+      await supabase.rpc('vote_opinion', { p_opinion_id: opinionId, p_delta: 1 });
     }
-    await supabase.rpc('vote_opinion', { p_opinion_id: opinionId, p_delta: delta });
   }catch(e){
     console.error('Failed to save vote:', e);
   }
+  render();
 }
 
 async function toggleTopicVote(topicId){
@@ -2513,30 +2772,30 @@ async function toggleTopicVote(topicId){
   if(!t) return;
   const stats = ensureStats(t);
   const alreadyVoted = state.votedTopicIds.has(topicId);
-  const delta = alreadyVoted ? -1 : 1;
-
-  if(alreadyVoted){
-    stats.topicVotes = Math.max(0, stats.topicVotes - 1);
-    state.votedTopicIds.delete(topicId);
-  } else {
-    stats.topicVotes += 1;
-    state.votedTopicIds.add(topicId);
-  }
-
-  render();
 
   try{
     if(alreadyVoted){
-      await supabase.from('topic_votes').delete().eq('voter_id', state.user.id).eq('topic_id', topicId);
+      const { error } = await supabase.from('topic_votes').delete().eq('voter_id', state.user.id).eq('topic_id', topicId);
+      if(error) throw error;
+      state.votedTopicIds.delete(topicId);
+      stats.topicVotes = Math.max(0, stats.topicVotes - 1);
+      await supabase.rpc('vote_topic', { p_topic_id: topicId, p_delta: -1 });
     } else {
       const { error } = await supabase.from('topic_votes').insert({ voter_id: state.user.id, topic_id: topicId });
-      if(error && error.code === '23505'){ return; }
+      if(error && error.code === '23505'){
+        state.votedTopicIds.add(topicId);
+        render();
+        return;
+      }
       if(error) throw error;
+      state.votedTopicIds.add(topicId);
+      stats.topicVotes += 1;
+      await supabase.rpc('vote_topic', { p_topic_id: topicId, p_delta: 1 });
     }
-    await supabase.rpc('vote_topic', { p_topic_id: topicId, p_delta: delta });
   }catch(e){
     console.error('Failed to save topic vote:', e);
   }
+  render();
 }
 
 function openNewModal(defaultType){
@@ -2780,12 +3039,14 @@ async function init(){
       await upsertProfile(newUser);
       await loadUserVotes();
       await loadNotifications();
+      setupNotificationRealtime();
     } else if(!newUser){
       state.profile = null;
       state.votedTopicIds = new Set();
       state.votedOpinionIds = new Set();
       state.notifications = [];
       state.unreadCount = 0;
+      setupNotificationRealtime();
     }
     if(!state.loading) render();
   });
@@ -2796,9 +3057,11 @@ async function init(){
   if(state.user){
     await upsertProfile(state.user);
     await loadNotifications();
+    setupNotificationRealtime();
   }
 
   await loadTopics();
+  setupRealtime();
   state.loading = false;
   render();
 }
