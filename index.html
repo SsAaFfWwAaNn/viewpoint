@@ -894,6 +894,27 @@ display:inline-block;
 .back-btn:hover{color:var(--accent);}
 }
 
+.detail-top-row{
+display:flex;
+align-items:center;
+justify-content:space-between;
+gap:10px;
+}
+.share-btn{
+background:var(--accent-light);
+border:1px solid var(--border-soft);
+color:var(--accent);
+font-size:13px;
+font-weight:700;
+padding:7px 14px;
+border-radius:20px;
+margin-bottom:18px;
+white-space:nowrap;
+}
+@media (hover:hover) and (pointer:fine){
+.share-btn:hover{background:var(--accent);color:#fff;}
+}
+
 .detail-card{
 background:var(--bg-surface);
 border:1px solid var(--border);
@@ -1428,6 +1449,42 @@ input, textarea, select{font-size:16px;}
 .sidebar{flex-direction:column;}
 }
 
+/* ---------- toast (link copied, etc.) ---------- */
+.toast{
+position:fixed;
+left:50%;
+bottom:28px;
+transform:translate(-50%,16px);
+background:var(--text-primary);
+color:var(--bg-surface);
+font-size:13.5px;
+font-weight:600;
+padding:12px 20px;
+border-radius:12px;
+box-shadow:0 8px 24px var(--shadow-card);
+opacity:0;
+pointer-events:none;
+transition:opacity .22s ease, transform .22s ease;
+z-index:9999;
+max-width:90vw;
+text-align:center;
+word-break:break-word;
+}
+.toast.show{
+opacity:1;
+transform:translate(-50%,0);
+}
+
+/* ---------- deep-link highlight (opinion shared via URL) ---------- */
+@keyframes viewpointHighlightPulse{
+0%{ box-shadow:0 0 0 0 rgba(47,133,90,.35); }
+70%{ box-shadow:0 0 0 10px rgba(47,133,90,0); }
+100%{ box-shadow:0 0 0 0 rgba(47,133,90,0); }
+}
+.opinion-item.highlight-pulse{
+animation:viewpointHighlightPulse 1.4s ease-out 2;
+border-radius:14px;
+}
 </style>
 
 </head>
@@ -1509,6 +1566,7 @@ let state = {
   filter: 'home',
   search: '',
   route: { view:'home', id:null },
+  pendingScrollOpinionId: null, // set right after navigating to a shared opinion link; consumed (and cleared) by the next render so we only scroll/highlight once
   detailOpinions: [],
   detailOpinionsTopicId: null, // which topic's opinions are currently loaded into detailOpinions
   repliesByOpinion: {},   // opinionId -> array of replies, loaded alongside detailOpinions
@@ -1556,6 +1614,89 @@ function escapeHtml(str){
   return d.innerHTML;
 }
 
+/* ---------- deep linking (shareable URLs for topics/debates/opinions) ----------
+   The address bar always mirrors state.route via ?topic=<id>&opinion=<id>, so
+   any URL someone copies (or gets from Back/Forward) opens directly into that
+   topic/debate instead of always landing on the homepage. GitHub Pages serves
+   the same index.html for any query string on this path, so plain query
+   params work fine on refresh/share without any server-side routing. */
+
+/** Sets state.route AND pushes/replaces the address bar to match, then renders. Use this (not a bare `state.route = …`) for anything a user actually clicks. */
+function navigateTo(route, opts = {}){
+  state.route = route;
+  syncUrlWithRoute(opts.opinionId || null, opts.replace);
+  if(opts.opinionId) state.pendingScrollOpinionId = opts.opinionId;
+  render();
+}
+
+/** Updates the address bar to match state.route without touching state or re-rendering — used by navigateTo, and directly by callers that already render() afterward themselves. */
+function syncUrlWithRoute(opinionId, replace){
+  try{
+    const url = new URL(window.location.href);
+    if(state.route.view === 'detail' && state.route.id){
+      url.searchParams.set('topic', state.route.id);
+      if(opinionId) url.searchParams.set('opinion', opinionId);
+      else url.searchParams.delete('opinion');
+    } else {
+      url.searchParams.delete('topic');
+      url.searchParams.delete('opinion');
+    }
+    const newUrl = url.pathname + url.search + url.hash;
+    if(replace) window.history.replaceState({ route: state.route }, '', newUrl);
+    else window.history.pushState({ route: state.route }, '', newUrl);
+  }catch(e){ /* non-fatal */ }
+}
+
+/** Builds the absolute shareable link for a topic/debate, or a specific opinion within it. */
+function buildShareUrl(topicId, opinionId){
+  const url = new URL(window.location.href);
+  url.search = '';
+  url.hash = '';
+  url.searchParams.set('topic', topicId);
+  if(opinionId) url.searchParams.set('opinion', opinionId);
+  return url.toString();
+}
+
+/** Copies a direct link to a topic/debate (or one opinion in it) to the clipboard and confirms via toast. */
+async function shareLink(topicId, opinionId){
+  const url = buildShareUrl(topicId, opinionId);
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      await navigator.clipboard.writeText(url);
+    } else {
+      // Fallback for browsers/contexts (older in-app browsers, non-HTTPS) without the async Clipboard API
+      const ta = document.createElement('textarea');
+      ta.value = url;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+    }
+    showToast('Link copied to clipboard 🔗');
+  }catch(e){
+    console.error('Failed to copy link:', e);
+    showToast(url, true);
+  }
+}
+
+let toastTimer = null;
+/** Small self-dismissing toast at the bottom of the screen — used for "link copied" style confirmations that don't need a modal. */
+function showToast(message, isRawLink){
+  let el = document.getElementById('toast');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'toast';
+    el.className = 'toast';
+    document.body.appendChild(el);
+  }
+  el.textContent = isRawLink ? `Copy this link: ${message}` : message;
+  requestAnimationFrame(() => el.classList.add('show'));
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), isRawLink ? 6000 : 2200);
+}
+
 /**
  * Renders the "⋯" dropdown menu on a topic/opinion card.
  * - Owners see Edit (topics only, opinions aren't editable) + Delete.
@@ -1565,11 +1706,17 @@ function escapeHtml(str){
  * targetId:    id of the topic/opinion this menu belongs to
  * isOwner:     whether the current user owns this content
  * label:       human label for the delete confirm text, e.g. "topic" / "debate" / "opinion"
+ * topicId:     for kind==='opinion', the id of the topic/debate it belongs to (needed to build its share link)
  */
-function renderMenu(menuId, kind, targetId, isOwner, label){
+function renderMenu(menuId, kind, targetId, isOwner, label, topicId){
   const open = state.openMenuFor === menuId;
   const deleteAttr = kind === 'topic' ? 'delete-topic' : 'delete-opinion';
   const items = [];
+  // Share is available to everyone (even signed-out visitors), so this list
+  // is never empty and the "⋯" menu always shows on every card.
+  const shareTopic = kind === 'topic' ? targetId : topicId;
+  const shareOpinion = kind === 'opinion' ? targetId : '';
+  items.push(`<button class="menu-item" data-share="${shareTopic}:${shareOpinion}">🔗 Share ${label}</button>`);
   if(isOwner && kind === 'topic'){
     items.push(`<button class="menu-item" data-edit-topic="${targetId}">✏️ Edit ${label}</button>`);
   }
@@ -2014,6 +2161,7 @@ function setupRealtime(){
         state.topics = state.topics.filter(t=>t.id!==deletedId);
         if(state.route.view==='detail' && state.route.id===deletedId){
           state.route = { view:'home', id:null };
+          syncUrlWithRoute(null, true);
         }
       } else {
         const mapped = mapTopicRow(payload.new);
@@ -2145,6 +2293,16 @@ async function render(){
     root.innerHTML = renderHome();
   } else {
     root.innerHTML = await renderDetail(state.route.id);
+    if(state.pendingScrollOpinionId){
+      const targetId = state.pendingScrollOpinionId;
+      state.pendingScrollOpinionId = null; // consume it so later re-renders (votes, realtime, etc.) don't keep re-scrolling
+      const target = document.getElementById('opinion-'+targetId);
+      if(target){
+        target.scrollIntoView({ behavior:'smooth', block:'center' });
+        target.classList.add('highlight-pulse');
+        setTimeout(() => target.classList.remove('highlight-pulse'), 2900);
+      }
+    }
   }
   bindEvents();
 }
@@ -2234,7 +2392,7 @@ function bindHeaderEvents(){
       const topicId = el.dataset.openTopic;
       markNotificationRead(id);
       state.notifOpen = false;
-      if(topicId){ state.route = { view:'detail', id: topicId }; render(); }
+      if(topicId){ navigateTo({ view:'detail', id: topicId }); }
     };
   });
   const markAllBtn = document.getElementById('markAllReadBtn');
@@ -2481,7 +2639,7 @@ async function renderDetail(id){
     const opEditedBit = op.editedAt ? ` · <span class="edited-tag">edited</span>` : '';
 
     return `
-      <div class="opinion-item ${isTop ? 'top':''}">
+      <div class="opinion-item ${isTop ? 'top':''}" id="opinion-${op.id}">
         <div class="vote-col">
           <button class="vote-arrow ${voted?'voted':''}" data-vote="${op.id}" aria-label="${voted ? 'Remove your vote' : 'Upvote'}" title="${voted ? 'Click to remove your vote' : 'Upvote'}">▲</button>
           <div class="vote-count">${op.votes}</div>
@@ -2493,7 +2651,7 @@ async function renderDetail(id){
               <span class="opinion-author-name">${escapeHtml(op.author || 'Anonymous')}</span>
               ${isTop ? `<div class="top-badge">TOP</div>` : ''}
             </div>
-            ${renderMenu('opinion-'+op.id, 'opinion', op.id, mineOp, 'opinion')}
+            ${renderMenu('opinion-'+op.id, 'opinion', op.id, mineOp, 'opinion', t.id)}
           </div>
           ${ isEditingOp ? `
             <div class="edit-form">
@@ -2612,7 +2770,10 @@ async function renderDetail(id){
   return `
     <div class="wrapper" style="grid-template-columns:1fr;max-width:820px;">
       <div>
-        <button class="back-btn" id="backHome">← Back to Viewpoint</button>
+        <div class="detail-top-row">
+          <button class="back-btn" id="backHome">← Back to Viewpoint</button>
+          <button class="share-btn" data-share-topic="${t.id}">🔗 Share ${isDebate?'debate':'topic'}</button>
+        </div>
         ${body}
       </div>
     </div>
@@ -2621,21 +2782,34 @@ async function renderDetail(id){
 
 function bindEvents(){
   const logo = document.getElementById('logoHome');
-  if(logo) logo.onclick = () => { state.route={view:'home',id:null}; render(); };
+  if(logo) logo.onclick = () => { navigateTo({view:'home',id:null}); };
 
   document.querySelectorAll('#navTabs button').forEach(b=>{
     b.onclick = () => {
       state.filter = b.dataset.filter;
-      state.route = { view:'home', id:null };
-      render();
+      navigateTo({ view:'home', id:null });
     };
   });
 
   const back = document.getElementById('backHome');
-  if(back) back.onclick = () => { state.route={view:'home',id:null}; render(); };
+  if(back) back.onclick = () => { navigateTo({view:'home',id:null}); };
 
   document.querySelectorAll('[data-open]').forEach(el=>{
-    el.onclick = () => { state.route = { view:'detail', id: el.dataset.open }; render(); };
+    el.onclick = () => { navigateTo({ view:'detail', id: el.dataset.open }); };
+  });
+
+  document.querySelectorAll('[data-share-topic]').forEach(el=>{
+    el.onclick = (e) => { e.stopPropagation(); shareLink(el.dataset.shareTopic); };
+  });
+
+  document.querySelectorAll('[data-share]').forEach(el=>{
+    el.onclick = (e) => {
+      e.stopPropagation();
+      state.openMenuFor = null;
+      const [topicId, opinionId] = el.dataset.share.split(':');
+      shareLink(topicId, opinionId || null);
+      render();
+    };
   });
 
   const search = document.getElementById('searchInput');
@@ -3038,6 +3212,7 @@ function deleteTopic(topicId){
 
     if(state.route.view==='detail' && state.route.id===topicId){
       state.route = { view:'home', id:null };
+      syncUrlWithRoute(null, true);
     }
     render();
 
@@ -3213,6 +3388,7 @@ function openNewModal(defaultType){
       const topic = mapTopicRow(data);
       state.topics.unshift(topic);
       state.route = { view:'detail', id: topic.id };
+      syncUrlWithRoute(null, false);
     }catch(e){
       console.error('Failed to create topic/debate:', e);
       alert("Couldn't create that — check your Supabase setup/connection and try again.");
@@ -3454,9 +3630,45 @@ async function init(){
 
   await loadTopics();
   setupRealtime();
+  applyInitialRouteFromUrl();
   state.loading = false;
   if(!state.authProcessing) render();
 }
+
+/** Reads ?topic=&opinion= from the address bar (once topics are loaded) and jumps straight into that topic/debate/opinion instead of the homepage — this is what makes shared links work. Called once at startup; back/forward afterward is handled by the popstate listener below. */
+function applyInitialRouteFromUrl(){
+  try{
+    const params = new URLSearchParams(window.location.search);
+    const topicId = params.get('topic');
+    const opinionId = params.get('opinion');
+    if(topicId && state.topics.some(t => t.id === topicId)){
+      state.route = { view:'detail', id: topicId };
+      if(opinionId) state.pendingScrollOpinionId = opinionId;
+      syncUrlWithRoute(opinionId, true); // normalize the URL without adding a history entry
+    } else if(topicId){
+      // Stale or bad link (e.g. the topic was deleted) — fall back to home and clean the URL
+      state.route = { view:'home', id:null };
+      syncUrlWithRoute(null, true);
+    }
+  }catch(e){ /* non-fatal */ }
+}
+
+// Keeps the Back/Forward buttons working once someone has navigated between
+// topics/home within the app (pushState calls above don't reload the page,
+// so without this the browser buttons would appear to do nothing).
+window.addEventListener('popstate', () => {
+  const params = new URLSearchParams(window.location.search);
+  const topicId = params.get('topic');
+  const opinionId = params.get('opinion');
+  if(topicId && state.topics.some(t => t.id === topicId)){
+    state.route = { view:'detail', id: topicId };
+    if(opinionId) state.pendingScrollOpinionId = opinionId;
+  } else {
+    state.route = { view:'home', id:null };
+  }
+  render();
+});
+
 init();
 
 </script>
