@@ -3309,6 +3309,26 @@ async function toggleTopicVote(topicId){
   render();
 }
 
+/**
+ * Wires a modal's dismiss affordances (clicking the dim backdrop, and its
+ * Cancel button) so a misclick doesn't silently throw away something someone
+ * actually typed — a common annoyance on both mobile (fat-finger taps on the
+ * backdrop around a bottom-sheet modal) and desktop (clicking just outside
+ * the box). If hasContent() says there's real unsaved text, we confirm
+ * before closing instead of closing immediately.
+ */
+function wireModalDismiss(wrap, cancelBtn, hasContent){
+  const tryClose = () => {
+    if(hasContent && hasContent()){
+      showConfirm("Discard this? What you've written will be lost.", 'Discard', () => wrap.remove());
+    } else {
+      wrap.remove();
+    }
+  };
+  wrap.onclick = (e) => { if(e.target===wrap) tryClose(); };
+  if(cancelBtn) cancelBtn.onclick = tryClose;
+}
+
 function openNewModal(defaultType){
   const wrap = document.createElement('div');
   wrap.className = 'overlay';
@@ -3354,8 +3374,12 @@ function openNewModal(defaultType){
   });
   syncTypeButtons();
 
-  document.getElementById('cancelNew').onclick = () => wrap.remove();
-  wrap.onclick = (e) => { if(e.target===wrap) wrap.remove(); };
+  wireModalDismiss(wrap, document.getElementById('cancelNew'), () => {
+    const title = document.getElementById('newTitle').value.trim();
+    const desc = document.getElementById('newDesc').value.trim();
+    const tag = document.getElementById('newTag').value.trim();
+    return !!(title || desc || tag);
+  });
 
   const confirmBtn = document.getElementById('confirmNew');
   confirmBtn.onclick = async () => {
@@ -3427,8 +3451,20 @@ function openEditModal(topic){
     </div>
   `;
   document.body.appendChild(wrap);
-  document.getElementById('cancelEdit').onclick = () => wrap.remove();
-  wrap.onclick = (e) => { if(e.target===wrap) wrap.remove(); };
+  wireModalDismiss(wrap, document.getElementById('cancelEdit'), () => {
+    const title = document.getElementById('editTitle').value.trim();
+    const desc = document.getElementById('editDesc').value.trim();
+    const tag = document.getElementById('editTag').value.trim();
+    if(title !== (topic.title||'').trim()) return true;
+    if(desc !== (topic.description||'').trim()) return true;
+    if(tag !== (topic.tag||'').trim()) return true;
+    if(isDebate){
+      const a = document.getElementById('editSideA').value.trim();
+      const b = document.getElementById('editSideB').value.trim();
+      if(a !== (labels[0]||'').trim() || b !== (labels[1]||'').trim()) return true;
+    }
+    return false;
+  });
 
   const confirmBtn = document.getElementById('confirmEdit');
   confirmBtn.onclick = async () => {
@@ -3492,8 +3528,9 @@ function openReportModal(kind, targetId){
     </div>
   `;
   document.body.appendChild(wrap);
-  document.getElementById('cancelReport').onclick = () => wrap.remove();
-  wrap.onclick = (e) => { if(e.target===wrap) wrap.remove(); };
+  wireModalDismiss(wrap, document.getElementById('cancelReport'), () => {
+    return document.getElementById('reportDetails').value.trim().length > 0;
+  });
 
   const confirmBtn = document.getElementById('confirmReport');
   confirmBtn.onclick = async () => {
