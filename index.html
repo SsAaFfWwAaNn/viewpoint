@@ -1781,11 +1781,34 @@ function displayName(){
   return state.profile.display_name || 'Anonymous';
 }
 
+/**
+ * The URL we send Google (and Supabase) back to after sign-in must exactly
+ * match an entry in Supabase's Auth → URL Configuration allow-list. Earlier
+ * this was `window.location.href`, which on a shared/deep-linked page
+ * (e.g. ?topic=...&opinion=...) is a different literal URL than the plain
+ * site URL — Supabase's allow-list check would fail and sign-in would just
+ * silently not complete. We now always redirect to the bare page URL, and
+ * use savePendingRouteForAuthRedirect()/restore step in init() to bring the
+ * person back to the topic/opinion they were viewing.
+ */
+function getAuthRedirectUrl(){
+  return window.location.origin + window.location.pathname;
+}
+
+/** Stashes the current ?topic=&opinion= (if any) so it can be restored after the Google redirect lands back on the bare page URL. */
+function savePendingRouteForAuthRedirect(){
+  try{
+    if(window.location.search) sessionStorage.setItem('vp_pending_search', window.location.search);
+    else sessionStorage.removeItem('vp_pending_search');
+  }catch(e){ /* non-fatal, e.g. storage blocked in some private/in-app browsers */ }
+}
+
 async function signInWithGoogle(){
   if(!supabase) return;
+  savePendingRouteForAuthRedirect();
   await supabase.auth.signInWithOAuth({
     provider: 'google',
-    options: { redirectTo: window.location.href }
+    options: { redirectTo: getAuthRedirectUrl() }
   });
 }
 
@@ -1799,10 +1822,11 @@ async function signInWithGoogle(){
 async function switchAccount(){
   if(!supabase) return;
   state.userMenuOpen = false;
+  savePendingRouteForAuthRedirect();
   await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
-      redirectTo: window.location.href,
+      redirectTo: getAuthRedirectUrl(),
       queryParams: { prompt: 'select_account' }
     }
   });
@@ -3601,6 +3625,28 @@ async function init(){
   const hasImplicitToken = hashParams.has('access_token');
   const authErrorDesc = searchParams.get('error_description') || hashParams.get('error_description')
     || searchParams.get('error') || hashParams.get('error');
+
+  // We land back here on the bare page URL (see getAuthRedirectUrl above),
+  // so restore whatever ?topic=&opinion= was open before the person went
+  // off to sign in with Google, before anything else reads location.search.
+  if(hasAuthCode || hasImplicitToken){
+    try{
+      const savedSearch = sessionStorage.getItem('vp_pending_search');
+      sessionStorage.removeItem('vp_pending_search');
+      if(savedSearch){
+        const savedParams = new URLSearchParams(savedSearch);
+        const topicId = savedParams.get('topic');
+        const opinionId = savedParams.get('opinion');
+        if(topicId){
+          searchParams.set('topic', topicId);
+          if(opinionId) searchParams.set('opinion', opinionId);
+          const url = new URL(window.location.href);
+          url.search = searchParams.toString();
+          window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);
+        }
+      }
+    }catch(e){ /* non-fatal */ }
+  }
 
   if(authErrorDesc){
     state.authError = decodeURIComponent(String(authErrorDesc)).replace(/\+/g, ' ');
